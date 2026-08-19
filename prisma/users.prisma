@@ -7,6 +7,7 @@ model User {
   role           Role      @relation(fields: [roleId], references: [id])
   status         Status    @default(active)
   lastLogin      DateTime? @map("last_login")
+  tokenVersion   Int       @default(0) @map("token_version")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 

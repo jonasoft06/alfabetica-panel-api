@@ -33,3 +33,6 @@ Thumbs.db
 # pnpm
 .pnpm-store/
 /generated/prisma
+
+# firebase
+*firebase-adminsdk*.json
