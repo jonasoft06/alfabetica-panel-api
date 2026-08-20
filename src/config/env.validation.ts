@@ -11,6 +11,8 @@ export const envValidationSchema = Joi.object({
 
   FIREBASE_SERVICE_ACCOUNT_B64: Joi.string().required(),
 
+  ALLOWED_EMAIL_DOMAIN: Joi.string().required(),
+
   JWT_ACCESS_SECRET: Joi.string().min(64).required(),
   JWT_ACCESS_EXPIRES_IN: Joi.string().default('1h'),
 
