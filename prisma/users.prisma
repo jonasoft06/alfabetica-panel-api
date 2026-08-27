@@ -1,15 +1,18 @@
 model User {
-  id             String    @id @default(uuid())
-  name           String
-  email          String    @unique
-  firebaseUid    String    @unique @map("firebase_uid")
-  roleId         String    @map("role_id")
-  role           Role      @relation(fields: [roleId], references: [id])
-  status         Status    @default(active)
-  lastLogin      DateTime? @map("last_login")
-  tokenVersion   Int       @default(0) @map("token_version")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  id           String    @id @default(uuid())
+  name         String
+  email        String    @unique
+  firebaseUid  String    @unique @map("firebase_uid")
+  roleId       String    @map("role_id")
+  role         Role      @relation(fields: [roleId], references: [id])
+  status       Status    @default(active)
+  lastLogin    DateTime? @map("last_login")
+  tokenVersion Int       @default(0) @map("token_version")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  createdProjects Project[]      @relation("ProjectCreatedBy")
+  updatedSettings SiteSettings[] @relation("SiteSettingsUpdatedBy")
 
   @@map("users")
 }
@@ -27,8 +30,8 @@ model Role {
 }
 
 model Permission {
-  id          String   @id @default(uuid())
-  key         String   @unique
+  id          String  @id @default(uuid())
+  key         String  @unique
   name        String
   description String?
 
@@ -38,12 +41,12 @@ model Permission {
 }
 
 model RolePermission {
-  id           String     @id @default(uuid())
-  roleId       String     @map("role_id")
-  permissionId String     @map("permission_id")
+  id           String @id @default(uuid())
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
 
-  role         Role       @relation(fields: [roleId], references: [id])
-  permission   Permission @relation(fields: [permissionId], references: [id])
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
 
   @@unique([roleId, permissionId])
   @@map("role_permissions")

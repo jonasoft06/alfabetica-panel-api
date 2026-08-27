@@ -1,0 +1,31 @@
+model ProductionStage {
+  id                 String   @id @default(uuid())
+  key                String   @unique
+  clientLabel        String   @map("client_label")
+  clientDescription  String?  @map("client_description") @db.Text
+  sortOrder          Int      @map("sort_order")
+  clickupStatusMatch String[] @default([]) @map("clickup_status_match")
+
+  productions Production[]
+
+  @@map("production_stages")
+}
+
+model Production {
+  id                 String    @id @default(uuid())
+  projectId          String    @unique @map("project_id")
+  publicCode         String    @unique @map("public_code")
+  clickupListId      String?   @map("clickup_list_id")
+  startDate          DateTime? @map("start_date") @db.Date
+  estimatedTotalDays Int?      @map("estimated_total_days")
+  currentStageId     String?   @map("current_stage_id")
+  estimatedEndDate   DateTime? @map("estimated_end_date") @db.Date
+  lastSyncedAt       DateTime? @map("last_synced_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  project      Project          @relation(fields: [projectId], references: [id])
+  currentStage ProductionStage? @relation(fields: [currentStageId], references: [id])
+
+  @@map("productions")
+}

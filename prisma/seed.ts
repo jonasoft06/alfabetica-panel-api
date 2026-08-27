@@ -15,17 +15,37 @@ async function main() {
     },
   });
 
+  // Rename tracking -> production on the existing row (not a new key),
+  // so the existing role_permissions link is preserved instead of orphaned.
+  const trackingPermission = await prisma.permission.findUnique({
+    where: { key: "tracking" },
+  });
+
+  if (trackingPermission) {
+    await prisma.permission.update({
+      where: { id: trackingPermission.id },
+      data: {
+        key: "production",
+        name: "Production",
+        description: "Production tracking and ClickUp sync",
+      },
+    });
+    console.log("Renamed permission: tracking -> production");
+  }
+
   const permissionsCatalog = [
     { key: "users", name: "Users", description: "Account and role administration" },
-    { key: "projects", name: "Projects", description: "Book management and editorial lifecycle" },
-    { key: "tracking", name: "Tracking", description: "Progress tracking and ClickUp sync" },
+    { key: "projects", name: "Projects", description: "Book, portfolio and public catalog management" },
+    { key: "production", name: "Production", description: "Production tracking and ClickUp sync" },
+    { key: "publication", name: "Publication", description: "Sales, links and DOI chapter publishing" },
+    { key: "settings", name: "Settings", description: "Global site configuration" },
     { key: "inventory", name: "Inventory", description: "Inventory management (phase 2)" },
   ];
 
   for (const permission of permissionsCatalog) {
     const registered = await prisma.permission.upsert({
       where: { key: permission.key },
-      update: {},
+      update: { name: permission.name, description: permission.description },
       create: permission,
     });
 

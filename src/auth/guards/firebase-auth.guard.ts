@@ -36,9 +36,7 @@ export class FirebaseAuthGuard implements CanActivate {
     const decoded = await getAuth(this.firebaseApp)
       .verifyIdToken(token)
       .catch(() => {
-        throw new UnauthorizedException(
-          'Invalid or expired Firebase ID token',
-        );
+        throw new UnauthorizedException('Invalid or expired Firebase ID token');
       });
 
     if (!decoded.email) {

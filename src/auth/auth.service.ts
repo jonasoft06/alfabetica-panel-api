@@ -145,9 +145,7 @@ export class AuthService {
     user: UserWithRole | null,
   ): asserts user is UserWithRole {
     if (!user || user.status !== Status.active) {
-      throw new UnauthorizedException(
-        'User is not registered or is inactive',
-      );
+      throw new UnauthorizedException('User is not registered or is inactive');
     }
   }
 

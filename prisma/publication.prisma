@@ -1,0 +1,51 @@
+enum PublicationType {
+  SALE
+  LINK
+  DOI
+}
+
+model Publication {
+  id              String          @id @default(uuid())
+  projectId       String          @unique @map("project_id")
+  slug            String          @unique
+  coverUrl        String?         @map("cover_url")
+  coverStorageKey String?         @map("cover_storage_key")
+  type            PublicationType
+  authors         String[]        @default([])
+  editionNumber   String?         @map("edition_number")
+  format          String?
+  collection      String?
+  measures        String?
+  presentation    String?
+  audience        String?
+  language        String?
+  isbn            String?
+  sku             String?
+  price           Decimal?        @db.Decimal(10, 2)
+  currency        String?         @default("MXN")
+  externalUrl     String?         @map("external_url")
+  isPublished     Boolean         @default(false) @map("is_published")
+  publishedAt     DateTime?       @map("published_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  project  Project              @relation(fields: [projectId], references: [id])
+  sections PublicationSection[]
+
+  @@map("publications")
+}
+
+model PublicationSection {
+  id            String   @id @default(uuid())
+  publicationId String   @map("publication_id")
+  label         String
+  sortOrder     Int      @map("sort_order")
+  pdfUrl        String   @map("pdf_url")
+  pdfStorageKey String   @map("pdf_storage_key")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  publication Publication @relation(fields: [publicationId], references: [id])
+
+  @@index([publicationId, sortOrder])
+  @@map("publication_sections")
+}

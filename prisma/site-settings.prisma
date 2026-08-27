@@ -1,0 +1,10 @@
+model SiteSettings {
+  id                Int      @id @default(1)
+  portfolioMaxItems Int      @default(10) @map("portfolio_max_items")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  updatedById       String?  @map("updated_by_id")
+
+  updatedBy User? @relation("SiteSettingsUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("site_settings")
+}
