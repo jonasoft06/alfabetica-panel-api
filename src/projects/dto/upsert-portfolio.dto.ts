@@ -5,12 +5,4 @@ export class UpsertPortfolioDto {
   @IsOptional()
   @IsString()
   slug?: string;
-
-  @IsOptional()
-  @IsString()
-  coverUrl?: string;
-
-  @IsOptional()
-  @IsString()
-  coverStorageKey?: string;
 }

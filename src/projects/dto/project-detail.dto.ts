@@ -10,7 +10,7 @@ export class ProjectDetailDto {
   updatedAt: Date;
   portfolio: {
     slug: string;
-    coverUrl: string | null;
+    coverMediaId: string | null;
     isPublished: boolean;
     displayOrder: number | null;
     publishedAt: Date | null;

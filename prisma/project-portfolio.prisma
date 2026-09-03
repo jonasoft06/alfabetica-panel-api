@@ -1,16 +1,16 @@
 model ProjectPortfolio {
-  id              String    @id @default(uuid())
-  projectId       String    @unique @map("project_id")
-  slug            String    @unique
-  coverUrl        String?   @map("cover_url")
-  coverStorageKey String?   @map("cover_storage_key")
-  isPublished     Boolean   @default(false) @map("is_published")
-  displayOrder    Int?      @map("display_order")
-  publishedAt     DateTime? @map("published_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id           String    @id @default(uuid())
+  projectId    String    @unique @map("project_id")
+  slug         String    @unique
+  coverMediaId String?   @unique @map("cover_media_id")
+  isPublished  Boolean   @default(false) @map("is_published")
+  displayOrder Int?      @map("display_order")
+  publishedAt  DateTime? @map("published_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  project Project @relation(fields: [projectId], references: [id])
+  project    Project       @relation(fields: [projectId], references: [id])
+  coverMedia ProjectMedia? @relation(fields: [coverMediaId], references: [id])
 
   @@map("project_portfolios")
 }

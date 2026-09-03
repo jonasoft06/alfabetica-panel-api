@@ -24,4 +24,11 @@ export const envValidationSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional().allow(''),
   }),
+
+  SPACES_ACCESS_KEY_ID: Joi.string().required(),
+  SPACES_SECRET_ACCESS_KEY: Joi.string().required(),
+  SPACES_BUCKET: Joi.string().required(),
+  SPACES_REGION: Joi.string().required(),
+  SPACES_ENDPOINT: Joi.string().required(),
+  SPACES_CDN_URL: Joi.string().required(),
 });

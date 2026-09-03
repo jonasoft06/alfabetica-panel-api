@@ -1,10 +1,23 @@
+import { randomUUID } from 'node:crypto';
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
+import {
+  EXTENSION_BY_MEDIA_TYPE,
+  MAX_SIZE_BY_MEDIA_TYPE,
+  MIME_TYPE_BY_MEDIA_TYPE,
+  UPLOAD_URL_EXPIRES_IN_SECONDS,
+} from '../media/media.service';
+import type { CreateMediaResult } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildStorageKey } from '../storage/storage-key.util';
+import { StorageService } from '../storage/storage.service';
+import type { ConfirmPortfolioCoverDto } from './dto/confirm-portfolio-cover.dto';
+import type { CreatePortfolioCoverDto } from './dto/create-portfolio-cover.dto';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { ProjectDetailDto } from './dto/project-detail.dto';
 import type { ProjectListItemDto } from './dto/project-list-item.dto';
@@ -31,7 +44,7 @@ const projectDetailSelect = {
   portfolio: {
     select: {
       slug: true,
-      coverUrl: true,
+      coverMediaId: true,
       isPublished: true,
       displayOrder: true,
       publishedAt: true,
@@ -53,7 +66,10 @@ type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   async create(
     dto: CreateProjectDto,
@@ -209,14 +225,137 @@ export class ProjectsService {
         create: {
           projectId,
           slug,
-          coverUrl: dto.coverUrl,
-          coverStorageKey: dto.coverStorageKey,
         },
         update: {
           slug: dto.slug,
-          coverUrl: dto.coverUrl,
-          coverStorageKey: dto.coverStorageKey,
         },
+      });
+
+      return this.loadDetailOrFail(tx, projectId);
+    });
+  }
+
+  async createPortfolioCover(
+    projectId: string,
+    dto: CreatePortfolioCoverDto,
+  ): Promise<CreateMediaResult> {
+    await this.findActiveOrFail(this.prisma, projectId);
+
+    const portfolio = await this.prisma.projectPortfolio.findUnique({
+      where: { projectId },
+      select: { coverMediaId: true },
+    });
+
+    if (!portfolio) {
+      throw new NotFoundException(
+        'Project has no portfolio to set a cover for',
+      );
+    }
+
+    if (portfolio.coverMediaId) {
+      throw new ConflictException({ reason: 'COVER_ALREADY_EXISTS' });
+    }
+
+    if (dto.mimeType !== MIME_TYPE_BY_MEDIA_TYPE.IMAGE) {
+      throw new BadRequestException('Mime type does not match media type');
+    }
+
+    if (dto.sizeBytes > MAX_SIZE_BY_MEDIA_TYPE.IMAGE) {
+      throw new BadRequestException('File exceeds maximum allowed size');
+    }
+
+    const mediaId = randomUUID();
+    const storageKey = buildStorageKey({
+      scope: 'PORTFOLIO',
+      projectId,
+      mediaId,
+      extension: EXTENSION_BY_MEDIA_TYPE.IMAGE,
+    });
+
+    await this.prisma.projectMedia.create({
+      data: {
+        id: mediaId,
+        projectId,
+        scope: 'PORTFOLIO',
+        type: 'IMAGE',
+        storageKey,
+        mimeType: dto.mimeType,
+        sizeBytes: dto.sizeBytes,
+        alt: dto.alt,
+        caption: dto.caption,
+        displayOrder: null,
+        status: 'PENDING',
+      },
+    });
+
+    const uploadUrl = await this.storageService.generateUploadUrl(
+      storageKey,
+      dto.mimeType,
+    );
+
+    return {
+      mediaId,
+      uploadUrl,
+      storageKey,
+      expiresIn: UPLOAD_URL_EXPIRES_IN_SECONDS,
+    };
+  }
+
+  async confirmPortfolioCover(
+    projectId: string,
+    dto: ConfirmPortfolioCoverDto,
+  ): Promise<ProjectDetailDto> {
+    return this.prisma.$transaction(async (tx) => {
+      await this.findActiveOrFail(tx, projectId);
+
+      const portfolio = await tx.projectPortfolio.findUnique({
+        where: { projectId },
+        select: { id: true, coverMediaId: true },
+      });
+
+      if (!portfolio) {
+        throw new NotFoundException(
+          'Project has no portfolio to set a cover for',
+        );
+      }
+
+      if (portfolio.coverMediaId) {
+        throw new ConflictException({ reason: 'COVER_ALREADY_EXISTS' });
+      }
+
+      const media = await tx.projectMedia.findUnique({
+        where: { id: dto.mediaId },
+        select: {
+          id: true,
+          projectId: true,
+          scope: true,
+          type: true,
+          status: true,
+        },
+      });
+
+      if (!media || media.projectId !== projectId) {
+        throw new NotFoundException('Cover media not found for this project');
+      }
+
+      if (media.scope !== 'PORTFOLIO' || media.type !== 'IMAGE') {
+        throw new BadRequestException(
+          'Media is not eligible as a portfolio cover',
+        );
+      }
+
+      if (media.status !== 'PENDING') {
+        throw new ConflictException('Media is not pending confirmation');
+      }
+
+      await tx.projectMedia.update({
+        where: { id: media.id },
+        data: { status: 'CONFIRMED', confirmedAt: new Date() },
+      });
+
+      await tx.projectPortfolio.update({
+        where: { id: portfolio.id },
+        data: { coverMediaId: media.id },
       });
 
       return this.loadDetailOrFail(tx, projectId);
@@ -340,7 +479,7 @@ export class ProjectsService {
       portfolio: project.portfolio
         ? {
             slug: project.portfolio.slug,
-            coverUrl: project.portfolio.coverUrl,
+            coverMediaId: project.portfolio.coverMediaId,
             isPublished: project.portfolio.isPublished,
             displayOrder: project.portfolio.displayOrder,
             publishedAt: project.portfolio.publishedAt,

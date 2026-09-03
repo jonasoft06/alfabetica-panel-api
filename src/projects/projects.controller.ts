@@ -17,6 +17,9 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { AccessTokenGuard } from '../auth/guards/access-token.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
+import type { CreateMediaResult } from '../media/media.service';
+import { ConfirmPortfolioCoverDto } from './dto/confirm-portfolio-cover.dto';
+import { CreatePortfolioCoverDto } from './dto/create-portfolio-cover.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import type { ProjectDetailDto } from './dto/project-detail.dto';
 import type { ProjectListItemDto } from './dto/project-list-item.dto';
@@ -83,6 +86,24 @@ export class ProjectsController {
     @Body() dto: UpsertPortfolioDto,
   ): Promise<ProjectDetailDto> {
     return this.projectsService.upsertPortfolio(id, dto);
+  }
+
+  @Post(':id/portfolio/cover')
+  @RequirePermissions('projects')
+  async createPortfolioCover(
+    @Param('id') id: string,
+    @Body() dto: CreatePortfolioCoverDto,
+  ): Promise<CreateMediaResult> {
+    return this.projectsService.createPortfolioCover(id, dto);
+  }
+
+  @Patch(':id/portfolio/cover/confirm')
+  @RequirePermissions('projects')
+  async confirmPortfolioCover(
+    @Param('id') id: string,
+    @Body() dto: ConfirmPortfolioCoverDto,
+  ): Promise<ProjectDetailDto> {
+    return this.projectsService.confirmPortfolioCover(id, dto);
   }
 
   @Post(':id/portfolio/publish')
