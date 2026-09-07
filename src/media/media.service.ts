@@ -1,12 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
-import { MediaScope, MediaType } from '../../generated/prisma/enums';
+import {
+  MediaScope,
+  MediaStatus,
+  MediaType,
+} from '../../generated/prisma/enums';
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { findActiveOrFail } from '../projects/project-existence.util';
 import { buildStorageKey } from '../storage/storage-key.util';
 import { StorageService } from '../storage/storage.service';
 import type { CreateMediaDto } from './dto/create-media.dto';
@@ -14,6 +21,7 @@ import type { CreateMediaDto } from './dto/create-media.dto';
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_SIZE_BYTES = 25 * 1024 * 1024;
 export const UPLOAD_URL_EXPIRES_IN_SECONDS = 900;
+const PENDING_CLEANUP_AGE_MS = 2 * 60 * 60 * 1000;
 
 const ALLOWED_TYPES_BY_SCOPE: Record<MediaScope, MediaType[]> = {
   PORTFOLIO: [MediaType.IMAGE],
@@ -42,6 +50,16 @@ export interface CreateMediaResult {
   expiresIn: number;
 }
 
+export interface ConfirmMediaResult {
+  id: string;
+  status: MediaStatus;
+  confirmedAt: Date;
+}
+
+export interface CleanupPendingMediaResult {
+  purged: number;
+}
+
 @Injectable()
 export class MediaService {
   constructor(
@@ -54,6 +72,8 @@ export class MediaService {
     dto: CreateMediaDto,
     user: AccessTokenPayload,
   ): Promise<CreateMediaResult> {
+    await findActiveOrFail(this.prisma, projectId);
+
     if (
       dto.scope === MediaScope.PUBLICATION &&
       !user.permissions.includes('publication')
@@ -116,5 +136,87 @@ export class MediaService {
       storageKey,
       expiresIn: UPLOAD_URL_EXPIRES_IN_SECONDS,
     };
+  }
+
+  async confirmMedia(mediaId: string): Promise<ConfirmMediaResult> {
+    const media = await this.prisma.projectMedia.findUnique({
+      where: { id: mediaId },
+      select: { id: true, status: true, displayOrder: true },
+    });
+
+    if (!media) {
+      throw new NotFoundException('Media not found');
+    }
+
+    if (media.displayOrder === null) {
+      throw new BadRequestException(
+        'Portfolio cover media must be confirmed via PATCH /projects/:id/portfolio/cover/confirm',
+      );
+    }
+
+    if (media.status === MediaStatus.CONFIRMED) {
+      throw new ConflictException('Media already confirmed');
+    }
+
+    const confirmedAt = new Date();
+    await this.prisma.projectMedia.update({
+      where: { id: mediaId },
+      data: { status: MediaStatus.CONFIRMED, confirmedAt },
+    });
+
+    return { id: mediaId, status: MediaStatus.CONFIRMED, confirmedAt };
+  }
+
+  async deleteMedia(mediaId: string): Promise<void> {
+    const media = await this.prisma.projectMedia.findUnique({
+      where: { id: mediaId },
+      select: { storageKey: true },
+    });
+
+    if (!media) {
+      throw new NotFoundException('Media not found');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.projectPortfolio.updateMany({
+        where: { coverMediaId: mediaId },
+        data: { coverMediaId: null },
+      });
+
+      await tx.projectMedia.delete({ where: { id: mediaId } });
+    });
+
+    await this.deleteStorageObjectSilently(media.storageKey);
+  }
+
+  async cleanupPendingMedia(): Promise<CleanupPendingMediaResult> {
+    const cutoff = new Date(Date.now() - PENDING_CLEANUP_AGE_MS);
+
+    const stale = await this.prisma.projectMedia.findMany({
+      where: { status: MediaStatus.PENDING, createdAt: { lt: cutoff } },
+      select: { id: true, storageKey: true },
+    });
+
+    if (stale.length === 0) {
+      return { purged: 0 };
+    }
+
+    await this.prisma.projectMedia.deleteMany({
+      where: { id: { in: stale.map((media) => media.id) } },
+    });
+
+    await Promise.all(
+      stale.map((media) => this.deleteStorageObjectSilently(media.storageKey)),
+    );
+
+    return { purged: stale.length };
+  }
+
+  private async deleteStorageObjectSilently(storageKey: string): Promise<void> {
+    try {
+      await this.storageService.deleteObject(storageKey);
+    } catch {
+      // Orphaned object in Spaces is harmless; the DB is already consistent.
+    }
   }
 }

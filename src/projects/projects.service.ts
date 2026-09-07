@@ -23,6 +23,10 @@ import type { ProjectDetailDto } from './dto/project-detail.dto';
 import type { ProjectListItemDto } from './dto/project-list-item.dto';
 import type { UpdateProjectDto } from './dto/update-project.dto';
 import type { UpsertPortfolioDto } from './dto/upsert-portfolio.dto';
+import {
+  findActiveOrFail,
+  type PrismaClientLike,
+} from './project-existence.util';
 import { slugify } from './utils/slugify.util';
 
 // Mirrors the schema default for SiteSettings.portfolioMaxItems, used when the
@@ -61,8 +65,6 @@ const projectDetailSelect = {
 type ProjectDetailRow = Prisma.ProjectGetPayload<{
   select: typeof projectDetailSelect;
 }>;
-
-type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 
 @Injectable()
 export class ProjectsService {
@@ -143,7 +145,7 @@ export class ProjectsService {
   }
 
   async update(id: string, dto: UpdateProjectDto): Promise<ProjectDetailDto> {
-    await this.findActiveOrFail(this.prisma, id);
+    await findActiveOrFail(this.prisma, id);
 
     await this.prisma.project.update({
       where: { id },
@@ -214,7 +216,7 @@ export class ProjectsService {
     dto: UpsertPortfolioDto,
   ): Promise<ProjectDetailDto> {
     return this.prisma.$transaction(async (tx) => {
-      const project = await this.findActiveOrFail(tx, projectId);
+      const project = await findActiveOrFail(tx, projectId);
 
       const slug =
         dto.slug ??
@@ -239,7 +241,7 @@ export class ProjectsService {
     projectId: string,
     dto: CreatePortfolioCoverDto,
   ): Promise<CreateMediaResult> {
-    await this.findActiveOrFail(this.prisma, projectId);
+    await findActiveOrFail(this.prisma, projectId);
 
     const portfolio = await this.prisma.projectPortfolio.findUnique({
       where: { projectId },
@@ -306,7 +308,7 @@ export class ProjectsService {
     dto: ConfirmPortfolioCoverDto,
   ): Promise<ProjectDetailDto> {
     return this.prisma.$transaction(async (tx) => {
-      await this.findActiveOrFail(tx, projectId);
+      await findActiveOrFail(tx, projectId);
 
       const portfolio = await tx.projectPortfolio.findUnique({
         where: { projectId },
@@ -364,7 +366,7 @@ export class ProjectsService {
 
   async publishPortfolio(projectId: string): Promise<ProjectDetailDto> {
     return this.prisma.$transaction(async (tx) => {
-      await this.findActiveOrFail(tx, projectId);
+      await findActiveOrFail(tx, projectId);
 
       const portfolio = await tx.projectPortfolio.findUnique({
         where: { projectId },
@@ -414,7 +416,7 @@ export class ProjectsService {
   }
 
   async unpublishPortfolio(projectId: string): Promise<ProjectDetailDto> {
-    await this.findActiveOrFail(this.prisma, projectId);
+    await findActiveOrFail(this.prisma, projectId);
 
     const portfolio = await this.prisma.projectPortfolio.findUnique({
       where: { projectId },
@@ -431,22 +433,6 @@ export class ProjectsService {
     });
 
     return this.loadDetailOrFail(this.prisma, projectId);
-  }
-
-  private async findActiveOrFail(
-    client: PrismaClientLike,
-    id: string,
-  ): Promise<{ id: string; title: string }> {
-    const project = await client.project.findFirst({
-      where: { id, deletedAt: null },
-      select: { id: true, title: true },
-    });
-
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-
-    return project;
   }
 
   private async loadDetailOrFail(
