@@ -28,8 +28,10 @@ model ProjectMedia {
   createdAt    DateTime    @default(now()) @map("created_at")
   confirmedAt  DateTime?   @map("confirmed_at")
 
-  project Project @relation(fields: [projectId], references: [id])
-  portfolioCover ProjectPortfolio?
+  project               Project             @relation(fields: [projectId], references: [id])
+  portfolioCover        ProjectPortfolio?
+  publicationCover      Publication?
+  publicationSectionPdf PublicationSection?
 
   @@index([projectId, scope, displayOrder])
   @@map("project_media")

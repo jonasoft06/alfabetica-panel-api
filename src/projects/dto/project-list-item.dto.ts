@@ -5,4 +5,7 @@ export class ProjectListItemDto {
   issueYear: number | null;
   createdAt: Date;
   isPublished: boolean;
+  hasPortfolio: boolean;
+  hasPublication: boolean;
+  hasProduction: boolean;
 }

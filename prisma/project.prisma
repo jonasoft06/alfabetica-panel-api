@@ -11,7 +11,7 @@ model Project {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   createdById String    @map("created_by_id")
 
-  createdBy   User               @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  createdBy   User              @relation("ProjectCreatedBy", fields: [createdById], references: [id])
   portfolio   ProjectPortfolio?
   production  Production?
   publication Publication?

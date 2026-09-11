@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
+import { PublicationType } from '../../generated/prisma/enums';
 import {
   EXTENSION_BY_MEDIA_TYPE,
   MAX_SIZE_BY_MEDIA_TYPE,
@@ -14,15 +15,19 @@ import {
 } from '../media/media.service';
 import type { CreateMediaResult } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { deleteStorageObjectSilently } from '../storage/delete-storage-object-silently.util';
 import { buildStorageKey } from '../storage/storage-key.util';
 import { StorageService } from '../storage/storage.service';
 import type { ConfirmPortfolioCoverDto } from './dto/confirm-portfolio-cover.dto';
 import type { CreatePortfolioCoverDto } from './dto/create-portfolio-cover.dto';
 import type { CreateProjectDto } from './dto/create-project.dto';
+import type { FindProjectsQueryDto } from './dto/find-projects-query.dto';
 import type { ProjectDetailDto } from './dto/project-detail.dto';
 import type { ProjectListItemDto } from './dto/project-list-item.dto';
+import type { PublicationDetailDto } from './dto/publication-detail.dto';
 import type { UpdateProjectDto } from './dto/update-project.dto';
 import type { UpsertPortfolioDto } from './dto/upsert-portfolio.dto';
+import type { UpsertPublicationDto } from './dto/upsert-publication.dto';
 import {
   findActiveOrFail,
   type PrismaClientLike,
@@ -116,9 +121,23 @@ export class ProjectsService {
     });
   }
 
-  async findAll(): Promise<ProjectListItemDto[]> {
+  async findAll(
+    filters: FindProjectsQueryDto = {},
+  ): Promise<ProjectListItemDto[]> {
+    const where: Prisma.ProjectWhereInput = { deletedAt: null };
+
+    if (filters.hasPortfolio !== undefined) {
+      where.portfolio = filters.hasPortfolio ? { isNot: null } : null;
+    }
+    if (filters.hasPublication !== undefined) {
+      where.publication = filters.hasPublication ? { isNot: null } : null;
+    }
+    if (filters.hasProduction !== undefined) {
+      where.production = filters.hasProduction ? { isNot: null } : null;
+    }
+
     const projects = await this.prisma.project.findMany({
-      where: { deletedAt: null },
+      where,
       select: {
         id: true,
         title: true,
@@ -126,6 +145,8 @@ export class ProjectsService {
         issueYear: true,
         createdAt: true,
         portfolio: { select: { isPublished: true } },
+        publication: { select: { id: true } },
+        production: { select: { id: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -137,11 +158,50 @@ export class ProjectsService {
       issueYear: project.issueYear,
       createdAt: project.createdAt,
       isPublished: project.portfolio?.isPublished ?? false,
+      hasPortfolio: project.portfolio !== null,
+      hasPublication: project.publication !== null,
+      hasProduction: project.production !== null,
     }));
   }
 
   async findOne(id: string): Promise<ProjectDetailDto> {
     return this.loadDetailOrFail(this.prisma, id);
+  }
+
+  async findPublication(projectId: string): Promise<PublicationDetailDto> {
+    await findActiveOrFail(this.prisma, projectId);
+
+    const publication = await this.prisma.publication.findUnique({
+      where: { projectId },
+      select: {
+        slug: true,
+        type: true,
+        coverMediaId: true,
+        authors: true,
+        editionNumber: true,
+        format: true,
+        collection: true,
+        measures: true,
+        presentation: true,
+        audience: true,
+        language: true,
+        isbn: true,
+        sku: true,
+        price: true,
+        quantity: true,
+        compareAtPrice: true,
+        currency: true,
+        externalUrl: true,
+        isPublished: true,
+        publishedAt: true,
+      },
+    });
+
+    if (!publication) {
+      throw new NotFoundException('Project has no publication');
+    }
+
+    return publication;
   }
 
   async update(id: string, dto: UpdateProjectDto): Promise<ProjectDetailDto> {
@@ -431,6 +491,98 @@ export class ProjectsService {
       where: { id: portfolio.id },
       data: { isPublished: false, publishedAt: null, displayOrder: null },
     });
+
+    return this.loadDetailOrFail(this.prisma, projectId);
+  }
+
+  async upsertPublication(
+    projectId: string,
+    dto: UpsertPublicationDto,
+  ): Promise<ProjectDetailDto> {
+    const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
+      const project = await findActiveOrFail(tx, projectId);
+
+      const existing = await tx.publication.findUnique({
+        where: { projectId },
+        select: { id: true, type: true },
+      });
+
+      const resolvedType = dto.type ?? existing?.type;
+      if (resolvedType === undefined) {
+        throw new BadRequestException(
+          'type is required to create a publication',
+        );
+      }
+
+      const isTypeChanging =
+        existing !== null &&
+        dto.type !== undefined &&
+        dto.type !== existing.type;
+
+      const staleStorageKeys: string[] = [];
+      const typeTransitionData: Prisma.PublicationUpdateInput = {};
+
+      if (isTypeChanging && existing) {
+        if (existing.type === PublicationType.SALE) {
+          typeTransitionData.price = null;
+          typeTransitionData.quantity = null;
+          typeTransitionData.sku = null;
+          typeTransitionData.compareAtPrice = null;
+        } else if (existing.type === PublicationType.LINK) {
+          typeTransitionData.externalUrl = null;
+        } else if (existing.type === PublicationType.DOI) {
+          const sections = await tx.publicationSection.findMany({
+            where: { publicationId: existing.id },
+            select: {
+              pdfMediaId: true,
+              pdfMedia: { select: { storageKey: true } },
+            },
+          });
+
+          if (sections.length > 0) {
+            await tx.publicationSection.deleteMany({
+              where: { publicationId: existing.id },
+            });
+            await tx.projectMedia.deleteMany({
+              where: {
+                id: { in: sections.map((section) => section.pdfMediaId) },
+              },
+            });
+            staleStorageKeys.push(
+              ...sections.map((section) => section.pdfMedia.storageKey),
+            );
+          }
+        }
+      }
+
+      const presentFields = Object.fromEntries(
+        Object.entries(dto).filter(([, value]) => value !== undefined),
+      ) as Partial<UpsertPublicationDto>;
+
+      if (existing) {
+        await tx.publication.update({
+          where: { id: existing.id },
+          data: { ...typeTransitionData, ...presentFields },
+        });
+      } else {
+        const slug = await this.uniquePublicationSlug(
+          tx,
+          slugify(project.title),
+        );
+
+        await tx.publication.create({
+          data: { ...presentFields, projectId, slug, type: resolvedType },
+        });
+      }
+
+      return staleStorageKeys;
+    });
+
+    await Promise.all(
+      staleStorageKeys.map((storageKey) =>
+        deleteStorageObjectSilently(this.storageService, storageKey),
+      ),
+    );
 
     return this.loadDetailOrFail(this.prisma, projectId);
   }

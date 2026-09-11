@@ -14,6 +14,7 @@ import {
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { findActiveOrFail } from '../projects/project-existence.util';
+import { deleteStorageObjectSilently } from '../storage/delete-storage-object-silently.util';
 import { buildStorageKey } from '../storage/storage-key.util';
 import { StorageService } from '../storage/storage.service';
 import type { CreateMediaDto } from './dto/create-media.dto';
@@ -186,7 +187,7 @@ export class MediaService {
       await tx.projectMedia.delete({ where: { id: mediaId } });
     });
 
-    await this.deleteStorageObjectSilently(media.storageKey);
+    await deleteStorageObjectSilently(this.storageService, media.storageKey);
   }
 
   async cleanupPendingMedia(): Promise<CleanupPendingMediaResult> {
@@ -206,17 +207,11 @@ export class MediaService {
     });
 
     await Promise.all(
-      stale.map((media) => this.deleteStorageObjectSilently(media.storageKey)),
+      stale.map((media) =>
+        deleteStorageObjectSilently(this.storageService, media.storageKey),
+      ),
     );
 
     return { purged: stale.length };
-  }
-
-  private async deleteStorageObjectSilently(storageKey: string): Promise<void> {
-    try {
-      await this.storageService.deleteObject(storageKey);
-    } catch {
-      // Orphaned object in Spaces is harmless; the DB is already consistent.
-    }
   }
 }
