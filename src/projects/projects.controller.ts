@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -22,7 +21,9 @@ import type { CreateMediaResult } from '../media/media.service';
 import { ConfirmPortfolioCoverDto } from './dto/confirm-portfolio-cover.dto';
 import { CreatePortfolioCoverDto } from './dto/create-portfolio-cover.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { CreatePublicationDto } from './dto/create-publication.dto';
 import { FindProjectsQueryDto } from './dto/find-projects-query.dto';
+import type { PortfolioDetailDto } from './dto/portfolio-detail.dto';
 import type { ProjectDetailDto } from './dto/project-detail.dto';
 import type { ProjectListItemDto } from './dto/project-list-item.dto';
 import type { PublicationDetailDto } from './dto/publication-detail.dto';
@@ -36,28 +37,21 @@ import { ProjectsService } from './projects.service';
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
+  // Seeding facets from this body is part of creating the project, so it needs
+  // no permission beyond 'projects'. Editing a facet afterwards is what
+  // requires the facet's own permission.
   @Post()
   @RequirePermissions('projects')
   async create(
     @Body() dto: CreateProjectDto,
     @CurrentUser() user: AccessTokenPayload,
   ): Promise<ProjectDetailDto> {
-    // @RequirePermissions can only describe the route, and this rule depends on
-    // the body: creating a project is 'projects', but seeding a publication
-    // alongside it also requires 'publication'. A decorator evaluated before the
-    // handler cannot see dto.publication, so the check lives here.
-    if (dto.publication && !user.permissions.includes('publication')) {
-      throw new ForbiddenException(
-        'Missing required permission(s): publication',
-      );
-    }
-
     return this.projectsService.create(dto, user.sub);
   }
 
   // Read-only: any authenticated user can list/view projects regardless of
-  // module permission. Module permissions (projects, publication, production,
-  // etc.) only gate writes (create/update/delete).
+  // module permission. Module permissions (projects, portfolio, publication,
+  // production, etc.) only gate writes (create/update/delete).
   @Get()
   async findAll(
     @Query() query: FindProjectsQueryDto,
@@ -86,22 +80,59 @@ export class ProjectsController {
     return this.projectsService.remove(id);
   }
 
-  @Put(':id/portfolio')
+  // Adding or removing a facet changes the project's shape, so it belongs to
+  // 'projects'. Editing the facet's own content belongs to the facet.
+  @Post(':id/portfolio')
   @RequirePermissions('projects')
-  async upsertPortfolio(
+  async createPortfolio(@Param('id') id: string): Promise<PortfolioDetailDto> {
+    return this.projectsService.createPortfolio(id);
+  }
+
+  @Delete(':id/portfolio')
+  @RequirePermissions('projects')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removePortfolio(@Param('id') id: string): Promise<void> {
+    return this.projectsService.deletePortfolio(id);
+  }
+
+  // Read-only, same as findAll/findOne above.
+  @Get(':id/portfolio')
+  async findPortfolio(@Param('id') id: string): Promise<PortfolioDetailDto> {
+    return this.projectsService.findPortfolio(id);
+  }
+
+  @Put(':id/portfolio')
+  @RequirePermissions('portfolio')
+  async updatePortfolio(
     @Param('id') id: string,
     @Body() dto: UpsertPortfolioDto,
-  ): Promise<ProjectDetailDto> {
-    return this.projectsService.upsertPortfolio(id, dto);
+  ): Promise<PortfolioDetailDto> {
+    return this.projectsService.updatePortfolio(id, dto);
+  }
+
+  @Post(':id/publication')
+  @RequirePermissions('projects')
+  async createPublication(
+    @Param('id') id: string,
+    @Body() dto: CreatePublicationDto,
+  ): Promise<PublicationDetailDto> {
+    return this.projectsService.createPublication(id, dto);
+  }
+
+  @Delete(':id/publication')
+  @RequirePermissions('projects')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removePublication(@Param('id') id: string): Promise<void> {
+    return this.projectsService.deletePublication(id);
   }
 
   @Put(':id/publication')
   @RequirePermissions('publication')
-  async upsertPublication(
+  async updatePublication(
     @Param('id') id: string,
     @Body() dto: UpsertPublicationDto,
-  ): Promise<ProjectDetailDto> {
-    return this.projectsService.upsertPublication(id, dto);
+  ): Promise<PublicationDetailDto> {
+    return this.projectsService.updatePublication(id, dto);
   }
 
   // Read-only, same as findAll/findOne above: any authenticated user can view
@@ -115,7 +146,7 @@ export class ProjectsController {
   }
 
   @Post(':id/portfolio/cover')
-  @RequirePermissions('projects')
+  @RequirePermissions('portfolio')
   async createPortfolioCover(
     @Param('id') id: string,
     @Body() dto: CreatePortfolioCoverDto,
@@ -124,7 +155,7 @@ export class ProjectsController {
   }
 
   @Patch(':id/portfolio/cover/confirm')
-  @RequirePermissions('projects')
+  @RequirePermissions('portfolio')
   async confirmPortfolioCover(
     @Param('id') id: string,
     @Body() dto: ConfirmPortfolioCoverDto,
@@ -133,14 +164,14 @@ export class ProjectsController {
   }
 
   @Post(':id/portfolio/publish')
-  @RequirePermissions('projects')
+  @RequirePermissions('portfolio')
   @HttpCode(HttpStatus.OK)
   async publish(@Param('id') id: string): Promise<ProjectDetailDto> {
     return this.projectsService.publishPortfolio(id);
   }
 
   @Post(':id/portfolio/unpublish')
-  @RequirePermissions('projects')
+  @RequirePermissions('portfolio')
   @HttpCode(HttpStatus.OK)
   async unpublish(@Param('id') id: string): Promise<ProjectDetailDto> {
     return this.projectsService.unpublishPortfolio(id);

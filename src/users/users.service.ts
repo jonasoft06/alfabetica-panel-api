@@ -18,11 +18,11 @@ export class UsersService {
           select: {
             id: true,
             name: true,
-            rolePermissions: {
-              select: {
-                permission: { select: { key: true } },
-              },
-            },
+          },
+        },
+        permissions: {
+          select: {
+            permission: { select: { key: true } },
           },
         },
       },
@@ -39,12 +39,10 @@ export class UsersService {
       name: user.name,
       email: user.email,
       status: user.status,
-      role: {
-        id: user.role.id,
-        name: user.role.name,
-      },
-      permissions: user.role.rolePermissions.map(
-        (rolePermission) => rolePermission.permission.key,
+      // Role is returned as plain data: it is a team label, not a permission source.
+      role: user.role ? { id: user.role.id, name: user.role.name } : null,
+      permissions: user.permissions.map(
+        (userPermission) => userPermission.permission.key,
       ),
     };
   }

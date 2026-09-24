@@ -29,6 +29,15 @@ const ALLOWED_TYPES_BY_SCOPE: Record<MediaScope, MediaType[]> = {
   PUBLICATION: [MediaType.IMAGE, MediaType.PDF],
 };
 
+// Media is gated by the module that owns it, not by 'projects': uploading a
+// portfolio image is a portfolio edit, uploading a publication PDF is a
+// publication edit. The scope is only known from the body or the stored row,
+// so @RequirePermissions cannot express this and the check lives in the service.
+const PERMISSION_BY_MEDIA_SCOPE: Record<MediaScope, string> = {
+  PORTFOLIO: 'portfolio',
+  PUBLICATION: 'publication',
+};
+
 export const MIME_TYPE_BY_MEDIA_TYPE: Record<MediaType, string> = {
   IMAGE: 'image/webp',
   PDF: 'application/pdf',
@@ -61,6 +70,19 @@ export interface CleanupPendingMediaResult {
   purged: number;
 }
 
+function assertScopePermission(
+  user: AccessTokenPayload,
+  scope: MediaScope,
+): void {
+  const permission = PERMISSION_BY_MEDIA_SCOPE[scope];
+
+  if (!user.permissions.includes(permission)) {
+    throw new ForbiddenException(
+      `Missing required permission(s): ${permission}`,
+    );
+  }
+}
+
 @Injectable()
 export class MediaService {
   constructor(
@@ -75,14 +97,7 @@ export class MediaService {
   ): Promise<CreateMediaResult> {
     await findActiveOrFail(this.prisma, projectId);
 
-    if (
-      dto.scope === MediaScope.PUBLICATION &&
-      !user.permissions.includes('publication')
-    ) {
-      throw new ForbiddenException(
-        'Missing required permission(s): publication',
-      );
-    }
+    assertScopePermission(user, dto.scope);
 
     if (!ALLOWED_TYPES_BY_SCOPE[dto.scope].includes(dto.type)) {
       throw new BadRequestException('Invalid type for this scope');
@@ -139,15 +154,20 @@ export class MediaService {
     };
   }
 
-  async confirmMedia(mediaId: string): Promise<ConfirmMediaResult> {
+  async confirmMedia(
+    mediaId: string,
+    user: AccessTokenPayload,
+  ): Promise<ConfirmMediaResult> {
     const media = await this.prisma.projectMedia.findUnique({
       where: { id: mediaId },
-      select: { id: true, status: true, displayOrder: true },
+      select: { id: true, status: true, displayOrder: true, scope: true },
     });
 
     if (!media) {
       throw new NotFoundException('Media not found');
     }
+
+    assertScopePermission(user, media.scope);
 
     if (media.displayOrder === null) {
       throw new BadRequestException(
@@ -168,18 +188,20 @@ export class MediaService {
     return { id: mediaId, status: MediaStatus.CONFIRMED, confirmedAt };
   }
 
-  async deleteMedia(mediaId: string): Promise<void> {
+  async deleteMedia(mediaId: string, user: AccessTokenPayload): Promise<void> {
     const media = await this.prisma.projectMedia.findUnique({
       where: { id: mediaId },
-      select: { storageKey: true },
+      select: { storageKey: true, scope: true },
     });
 
     if (!media) {
       throw new NotFoundException('Media not found');
     }
 
+    assertScopePermission(user, media.scope);
+
     await this.prisma.$transaction(async (tx) => {
-      await tx.projectPortfolio.updateMany({
+      await tx.portfolio.updateMany({
         where: { coverMediaId: mediaId },
         data: { coverMediaId: null },
       });

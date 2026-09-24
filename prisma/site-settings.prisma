@@ -4,7 +4,7 @@ model SiteSettings {
   updatedAt         DateTime @updatedAt @map("updated_at")
   updatedById       String?  @map("updated_by_id")
 
-  updatedBy User? @relation("SiteSettingsUpdatedBy", fields: [updatedById], references: [id])
+  updatedBy User? @relation("SiteSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@map("site_settings")
 }

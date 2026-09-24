@@ -2,6 +2,7 @@ import { Prisma } from '../../../generated/prisma/client';
 import { PublicationType } from '../../../generated/prisma/enums';
 
 export class PublicationDetailDto {
+  id: string;
   slug: string;
   type: PublicationType;
   coverMediaId: string | null;
@@ -22,4 +23,6 @@ export class PublicationDetailDto {
   externalUrl: string | null;
   isPublished: boolean;
   publishedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }

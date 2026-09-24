@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
-import { PublicationType } from '../../generated/prisma/enums';
+import { MediaScope, PublicationType } from '../../generated/prisma/enums';
 import {
   EXTENSION_BY_MEDIA_TYPE,
   MAX_SIZE_BY_MEDIA_TYPE,
@@ -21,7 +21,9 @@ import { StorageService } from '../storage/storage.service';
 import type { ConfirmPortfolioCoverDto } from './dto/confirm-portfolio-cover.dto';
 import type { CreatePortfolioCoverDto } from './dto/create-portfolio-cover.dto';
 import type { CreateProjectDto } from './dto/create-project.dto';
+import type { CreatePublicationDto } from './dto/create-publication.dto';
 import type { FindProjectsQueryDto } from './dto/find-projects-query.dto';
+import type { PortfolioDetailDto } from './dto/portfolio-detail.dto';
 import type { ProjectDetailDto } from './dto/project-detail.dto';
 import type { ProjectListItemDto } from './dto/project-list-item.dto';
 import type { PublicationDetailDto } from './dto/publication-detail.dto';
@@ -52,6 +54,7 @@ const projectDetailSelect = {
   updatedAt: true,
   portfolio: {
     select: {
+      id: true,
       slug: true,
       coverMediaId: true,
       isPublished: true,
@@ -70,6 +73,45 @@ const projectDetailSelect = {
 type ProjectDetailRow = Prisma.ProjectGetPayload<{
   select: typeof projectDetailSelect;
 }>;
+
+// Shape returned by the portfolio facet endpoints (GET/POST/PUT), mirroring
+// what publicationDetailSelect does for the publication facet.
+const portfolioDetailSelect = {
+  id: true,
+  slug: true,
+  coverMediaId: true,
+  isPublished: true,
+  displayOrder: true,
+  publishedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.PortfolioSelect;
+
+const publicationDetailSelect = {
+  id: true,
+  slug: true,
+  type: true,
+  coverMediaId: true,
+  authors: true,
+  editionNumber: true,
+  format: true,
+  collection: true,
+  measures: true,
+  presentation: true,
+  audience: true,
+  language: true,
+  isbn: true,
+  sku: true,
+  price: true,
+  quantity: true,
+  compareAtPrice: true,
+  currency: true,
+  externalUrl: true,
+  isPublished: true,
+  publishedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.PublicationSelect;
 
 @Injectable()
 export class ProjectsService {
@@ -97,7 +139,7 @@ export class ProjectsService {
       });
 
       if (dto.portfolio) {
-        await tx.projectPortfolio.create({
+        await tx.portfolio.create({
           data: {
             projectId: project.id,
             slug: await this.uniquePortfolioSlug(tx, slugify(dto.title)),
@@ -173,28 +215,7 @@ export class ProjectsService {
 
     const publication = await this.prisma.publication.findUnique({
       where: { projectId },
-      select: {
-        slug: true,
-        type: true,
-        coverMediaId: true,
-        authors: true,
-        editionNumber: true,
-        format: true,
-        collection: true,
-        measures: true,
-        presentation: true,
-        audience: true,
-        language: true,
-        isbn: true,
-        sku: true,
-        price: true,
-        quantity: true,
-        compareAtPrice: true,
-        currency: true,
-        externalUrl: true,
-        isPublished: true,
-        publishedAt: true,
-      },
+      select: publicationDetailSelect,
     });
 
     if (!publication) {
@@ -245,7 +266,7 @@ export class ProjectsService {
       const suffix = `deleted-${id.slice(0, 8)}`;
 
       if (project.portfolio) {
-        await tx.projectPortfolio.update({
+        await tx.portfolio.update({
           where: { id: project.portfolio.id },
           data: {
             slug: `${project.portfolio.slug}-${suffix}`,
@@ -271,30 +292,112 @@ export class ProjectsService {
     });
   }
 
-  async upsertPortfolio(
-    projectId: string,
-    dto: UpsertPortfolioDto,
-  ): Promise<ProjectDetailDto> {
+  async findPortfolio(projectId: string): Promise<PortfolioDetailDto> {
+    await findActiveOrFail(this.prisma, projectId);
+
+    const portfolio = await this.prisma.portfolio.findUnique({
+      where: { projectId },
+      select: portfolioDetailSelect,
+    });
+
+    if (!portfolio) {
+      throw new NotFoundException('Project has no portfolio');
+    }
+
+    return portfolio;
+  }
+
+  async createPortfolio(projectId: string): Promise<PortfolioDetailDto> {
     return this.prisma.$transaction(async (tx) => {
       const project = await findActiveOrFail(tx, projectId);
 
-      const slug =
-        dto.slug ??
-        (await this.uniquePortfolioSlug(tx, slugify(project.title)));
-
-      await tx.projectPortfolio.upsert({
+      const existing = await tx.portfolio.findUnique({
         where: { projectId },
-        create: {
-          projectId,
-          slug,
-        },
-        update: {
-          slug: dto.slug,
-        },
+        select: { id: true },
       });
 
-      return this.loadDetailOrFail(tx, projectId);
+      if (existing) {
+        throw new ConflictException('Project already has a portfolio');
+      }
+
+      return tx.portfolio.create({
+        data: {
+          projectId,
+          slug: await this.uniquePortfolioSlug(tx, slugify(project.title)),
+        },
+        select: portfolioDetailSelect,
+      });
     });
+  }
+
+  async updatePortfolio(
+    projectId: string,
+    dto: UpsertPortfolioDto,
+  ): Promise<PortfolioDetailDto> {
+    await findActiveOrFail(this.prisma, projectId);
+
+    const portfolio = await this.prisma.portfolio.findUnique({
+      where: { projectId },
+      select: { id: true },
+    });
+
+    if (!portfolio) {
+      throw new NotFoundException('Project has no portfolio');
+    }
+
+    // Nothing to write is not an error: return the facet untouched rather than
+    // bumping updatedAt for an empty body.
+    if (dto.displayOrder === undefined) {
+      return this.findPortfolio(projectId);
+    }
+
+    return this.prisma.portfolio.update({
+      where: { id: portfolio.id },
+      data: { displayOrder: dto.displayOrder },
+      select: portfolioDetailSelect,
+    });
+  }
+
+  async deletePortfolio(projectId: string): Promise<void> {
+    const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
+      await findActiveOrFail(tx, projectId);
+
+      const portfolio = await tx.portfolio.findUnique({
+        where: { projectId },
+        select: { id: true },
+      });
+
+      if (!portfolio) {
+        throw new NotFoundException('Project has no portfolio to delete');
+      }
+
+      const media = await tx.projectMedia.findMany({
+        where: { projectId, scope: MediaScope.PORTFOLIO },
+        select: { id: true, storageKey: true },
+      });
+
+      // Released before the media rows go, so the cover FK never dangles.
+      await tx.portfolio.update({
+        where: { id: portfolio.id },
+        data: { coverMediaId: null },
+      });
+
+      await tx.projectMedia.deleteMany({
+        where: { projectId, scope: MediaScope.PORTFOLIO },
+      });
+
+      await tx.portfolio.delete({ where: { id: portfolio.id } });
+
+      return media.map((item) => item.storageKey);
+    });
+
+    // Storage cleanup runs after the transaction commits: a failed delete here
+    // only leaves an orphaned object, which is harmless.
+    await Promise.all(
+      staleStorageKeys.map((storageKey) =>
+        deleteStorageObjectSilently(this.storageService, storageKey),
+      ),
+    );
   }
 
   async createPortfolioCover(
@@ -303,7 +406,7 @@ export class ProjectsService {
   ): Promise<CreateMediaResult> {
     await findActiveOrFail(this.prisma, projectId);
 
-    const portfolio = await this.prisma.projectPortfolio.findUnique({
+    const portfolio = await this.prisma.portfolio.findUnique({
       where: { projectId },
       select: { coverMediaId: true },
     });
@@ -370,7 +473,7 @@ export class ProjectsService {
     return this.prisma.$transaction(async (tx) => {
       await findActiveOrFail(tx, projectId);
 
-      const portfolio = await tx.projectPortfolio.findUnique({
+      const portfolio = await tx.portfolio.findUnique({
         where: { projectId },
         select: { id: true, coverMediaId: true },
       });
@@ -415,7 +518,7 @@ export class ProjectsService {
         data: { status: 'CONFIRMED', confirmedAt: new Date() },
       });
 
-      await tx.projectPortfolio.update({
+      await tx.portfolio.update({
         where: { id: portfolio.id },
         data: { coverMediaId: media.id },
       });
@@ -428,7 +531,7 @@ export class ProjectsService {
     return this.prisma.$transaction(async (tx) => {
       await findActiveOrFail(tx, projectId);
 
-      const portfolio = await tx.projectPortfolio.findUnique({
+      const portfolio = await tx.portfolio.findUnique({
         where: { projectId },
         select: { id: true, isPublished: true },
       });
@@ -444,7 +547,7 @@ export class ProjectsService {
       const maxItems =
         settings?.portfolioMaxItems ?? DEFAULT_PORTFOLIO_MAX_ITEMS;
 
-      const currentCount = await tx.projectPortfolio.count({
+      const currentCount = await tx.portfolio.count({
         where: { isPublished: true },
       });
 
@@ -458,11 +561,11 @@ export class ProjectsService {
         });
       }
 
-      const { _max } = await tx.projectPortfolio.aggregate({
+      const { _max } = await tx.portfolio.aggregate({
         _max: { displayOrder: true },
       });
 
-      await tx.projectPortfolio.update({
+      await tx.portfolio.update({
         where: { id: portfolio.id },
         data: {
           isPublished: true,
@@ -478,7 +581,7 @@ export class ProjectsService {
   async unpublishPortfolio(projectId: string): Promise<ProjectDetailDto> {
     await findActiveOrFail(this.prisma, projectId);
 
-    const portfolio = await this.prisma.projectPortfolio.findUnique({
+    const portfolio = await this.prisma.portfolio.findUnique({
       where: { projectId },
       select: { id: true },
     });
@@ -487,7 +590,7 @@ export class ProjectsService {
       throw new NotFoundException('Project has no portfolio to unpublish');
     }
 
-    await this.prisma.projectPortfolio.update({
+    await this.prisma.portfolio.update({
       where: { id: portfolio.id },
       data: { isPublished: false, publishedAt: null, displayOrder: null },
     });
@@ -495,88 +598,110 @@ export class ProjectsService {
     return this.loadDetailOrFail(this.prisma, projectId);
   }
 
-  async upsertPublication(
+  async createPublication(
     projectId: string,
-    dto: UpsertPublicationDto,
-  ): Promise<ProjectDetailDto> {
-    const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
+    dto: CreatePublicationDto,
+  ): Promise<PublicationDetailDto> {
+    return this.prisma.$transaction(async (tx) => {
       const project = await findActiveOrFail(tx, projectId);
 
       const existing = await tx.publication.findUnique({
         where: { projectId },
-        select: { id: true, type: true },
+        select: { id: true },
       });
 
-      const resolvedType = dto.type ?? existing?.type;
-      if (resolvedType === undefined) {
-        throw new BadRequestException(
-          'type is required to create a publication',
-        );
+      if (existing) {
+        throw new ConflictException('Project already has a publication');
       }
 
-      const isTypeChanging =
-        existing !== null &&
-        dto.type !== undefined &&
-        dto.type !== existing.type;
+      const { type, ...fields } = dto;
+      const presentFields = Object.fromEntries(
+        Object.entries(fields).filter(([, value]) => value !== undefined),
+      ) as Partial<CreatePublicationDto>;
 
-      const staleStorageKeys: string[] = [];
-      const typeTransitionData: Prisma.PublicationUpdateInput = {};
+      return tx.publication.create({
+        data: {
+          ...presentFields,
+          projectId,
+          type,
+          // Publication slugs live in their own unique namespace, so this is
+          // resolved against publications, not against portfolio slugs.
+          slug: await this.uniquePublicationSlug(tx, slugify(project.title)),
+        },
+        select: publicationDetailSelect,
+      });
+    });
+  }
 
-      if (isTypeChanging && existing) {
-        if (existing.type === PublicationType.SALE) {
-          typeTransitionData.price = null;
-          typeTransitionData.quantity = null;
-          typeTransitionData.sku = null;
-          typeTransitionData.compareAtPrice = null;
-        } else if (existing.type === PublicationType.LINK) {
-          typeTransitionData.externalUrl = null;
-        } else if (existing.type === PublicationType.DOI) {
-          const sections = await tx.publicationSection.findMany({
-            where: { publicationId: existing.id },
-            select: {
-              pdfMediaId: true,
-              pdfMedia: { select: { storageKey: true } },
-            },
-          });
+  async updatePublication(
+    projectId: string,
+    dto: UpsertPublicationDto,
+  ): Promise<PublicationDetailDto> {
+    const { publication, staleStorageKeys } = await this.prisma.$transaction(
+      async (tx) => {
+        await findActiveOrFail(tx, projectId);
 
-          if (sections.length > 0) {
-            await tx.publicationSection.deleteMany({
+        const existing = await tx.publication.findUnique({
+          where: { projectId },
+          select: { id: true, type: true },
+        });
+
+        if (!existing) {
+          throw new NotFoundException('Project has no publication');
+        }
+
+        const isTypeChanging =
+          dto.type !== undefined && dto.type !== existing.type;
+
+        const staleStorageKeys: string[] = [];
+        const typeTransitionData: Prisma.PublicationUpdateInput = {};
+
+        if (isTypeChanging) {
+          if (existing.type === PublicationType.SALE) {
+            typeTransitionData.price = null;
+            typeTransitionData.quantity = null;
+            typeTransitionData.sku = null;
+            typeTransitionData.compareAtPrice = null;
+          } else if (existing.type === PublicationType.LINK) {
+            typeTransitionData.externalUrl = null;
+          } else if (existing.type === PublicationType.DOI) {
+            const sections = await tx.publicationSection.findMany({
               where: { publicationId: existing.id },
-            });
-            await tx.projectMedia.deleteMany({
-              where: {
-                id: { in: sections.map((section) => section.pdfMediaId) },
+              select: {
+                pdfMediaId: true,
+                pdfMedia: { select: { storageKey: true } },
               },
             });
-            staleStorageKeys.push(
-              ...sections.map((section) => section.pdfMedia.storageKey),
-            );
+
+            if (sections.length > 0) {
+              await tx.publicationSection.deleteMany({
+                where: { publicationId: existing.id },
+              });
+              await tx.projectMedia.deleteMany({
+                where: {
+                  id: { in: sections.map((section) => section.pdfMediaId) },
+                },
+              });
+              staleStorageKeys.push(
+                ...sections.map((section) => section.pdfMedia.storageKey),
+              );
+            }
           }
         }
-      }
 
-      const presentFields = Object.fromEntries(
-        Object.entries(dto).filter(([, value]) => value !== undefined),
-      ) as Partial<UpsertPublicationDto>;
+        const presentFields = Object.fromEntries(
+          Object.entries(dto).filter(([, value]) => value !== undefined),
+        ) as Partial<UpsertPublicationDto>;
 
-      if (existing) {
-        await tx.publication.update({
+        const publication = await tx.publication.update({
           where: { id: existing.id },
           data: { ...typeTransitionData, ...presentFields },
+          select: publicationDetailSelect,
         });
-      } else {
-        const slug = await this.uniquePublicationSlug(
-          tx,
-          slugify(project.title),
-        );
 
-        await tx.publication.create({
-          data: { ...presentFields, projectId, slug, type: resolvedType },
-        });
-      }
-
-      return staleStorageKeys;
-    });
+        return { publication, staleStorageKeys };
+      },
+    );
 
     await Promise.all(
       staleStorageKeys.map((storageKey) =>
@@ -584,7 +709,55 @@ export class ProjectsService {
       ),
     );
 
-    return this.loadDetailOrFail(this.prisma, projectId);
+    return publication;
+  }
+
+  async deletePublication(projectId: string): Promise<void> {
+    const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
+      await findActiveOrFail(tx, projectId);
+
+      const publication = await tx.publication.findUnique({
+        where: { projectId },
+        select: { id: true },
+      });
+
+      if (!publication) {
+        throw new NotFoundException('Project has no publication to delete');
+      }
+
+      const media = await tx.projectMedia.findMany({
+        where: { projectId, scope: MediaScope.PUBLICATION },
+        select: { storageKey: true },
+      });
+
+      // Sections reference their PDF with a RESTRICT foreign key, so they have
+      // to go before the media rows they point at.
+      await tx.publicationSection.deleteMany({
+        where: { publicationId: publication.id },
+      });
+
+      // Released before the media rows go, so the cover FK never dangles.
+      await tx.publication.update({
+        where: { id: publication.id },
+        data: { coverMediaId: null },
+      });
+
+      await tx.projectMedia.deleteMany({
+        where: { projectId, scope: MediaScope.PUBLICATION },
+      });
+
+      await tx.publication.delete({ where: { id: publication.id } });
+
+      return media.map((item) => item.storageKey);
+    });
+
+    // Storage cleanup runs after the transaction commits: a failed delete here
+    // only leaves an orphaned object, which is harmless.
+    await Promise.all(
+      staleStorageKeys.map((storageKey) =>
+        deleteStorageObjectSilently(this.storageService, storageKey),
+      ),
+    );
   }
 
   private async loadDetailOrFail(
@@ -616,6 +789,7 @@ export class ProjectsService {
       updatedAt: project.updatedAt,
       portfolio: project.portfolio
         ? {
+            id: project.portfolio.id,
             slug: project.portfolio.slug,
             coverMediaId: project.portfolio.coverMediaId,
             isPublished: project.portfolio.isPublished,
@@ -646,7 +820,7 @@ export class ProjectsService {
   ): Promise<string> {
     return this.uniqueSlug(base, async (slug) =>
       Boolean(
-        await client.projectPortfolio.findUnique({
+        await client.portfolio.findUnique({
           where: { slug },
           select: { id: true },
         }),

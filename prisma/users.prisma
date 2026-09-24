@@ -1,18 +1,29 @@
 model User {
-  id           String    @id @default(uuid())
-  name         String
-  email        String    @unique
-  firebaseUid  String    @unique @map("firebase_uid")
-  roleId       String    @map("role_id")
-  role         Role      @relation(fields: [roleId], references: [id])
-  status       Status    @default(active)
-  lastLogin    DateTime? @map("last_login")
-  tokenVersion Int       @default(0) @map("token_version")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  id                  String     @id @default(uuid())
+  name                String?
+  email               String     @unique
+  firebaseUid         String?    @unique @map("firebase_uid")
+  roleId              String?    @map("role_id")
+  role                Role?      @relation(fields: [roleId], references: [id])
+  status              UserStatus @default(INVITED)
+  invitedAt           DateTime?  @map("invited_at")
+  invitationExpiresAt DateTime?  @map("invitation_expires_at")
+  invitedById         String?    @map("invited_by_id")
+  lastLogin           DateTime?  @map("last_login")
+  tokenVersion        Int        @default(0) @map("token_version")
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
 
-  createdProjects Project[]      @relation("ProjectCreatedBy")
-  updatedSettings SiteSettings[] @relation("SiteSettingsUpdatedBy")
+  invitedBy    User?            @relation("UserInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  invitedUsers User[]           @relation("UserInvitedBy")
+  permissions  UserPermission[]
+
+  createdProjects     Project[]      @relation("ProjectCreatedBy")
+  updatedProjects     Project[]      @relation("ProjectUpdatedBy")
+  updatedPortfolios   Portfolio[]    @relation("PortfolioUpdatedBy")
+  updatedPublications Publication[]  @relation("PublicationUpdatedBy")
+  updatedSettings     SiteSettings[] @relation("SiteSettingsUpdatedBy")
+  activityLogs        ActivityLog[]  @relation("ActivityLogActor")
 
   @@map("users")
 }
@@ -23,8 +34,7 @@ model Role {
   description String?
   createdAt   DateTime @default(now()) @map("created_at")
 
-  users           User[]
-  rolePermissions RolePermission[]
+  users User[]
 
   @@map("roles")
 }
@@ -35,24 +45,26 @@ model Permission {
   name        String
   description String?
 
-  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
 
   @@map("permissions")
 }
 
-model RolePermission {
-  id           String @id @default(uuid())
-  roleId       String @map("role_id")
-  permissionId String @map("permission_id")
+model UserPermission {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  permissionId String   @map("permission_id")
+  createdAt    DateTime @default(now()) @map("created_at")
 
-  role       Role       @relation(fields: [roleId], references: [id])
-  permission Permission @relation(fields: [permissionId], references: [id])
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
-  @@unique([roleId, permissionId])
-  @@map("role_permissions")
+  @@unique([userId, permissionId])
+  @@map("user_permissions")
 }
 
-enum Status {
-  active
-  inactive
+enum UserStatus {
+  INVITED
+  ACTIVE
+  INACTIVE
 }

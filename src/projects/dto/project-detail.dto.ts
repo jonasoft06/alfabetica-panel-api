@@ -9,6 +9,7 @@ export class ProjectDetailDto {
   createdAt: Date;
   updatedAt: Date;
   portfolio: {
+    id: string;
     slug: string;
     coverMediaId: string | null;
     isPublished: boolean;

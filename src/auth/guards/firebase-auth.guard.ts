@@ -13,6 +13,9 @@ import { FIREBASE_ADMIN_APP } from '../../firebase/firebase-admin.provider';
 export interface FirebaseUser {
   uid: string;
   email: string;
+  emailVerified: boolean;
+  /** Display name from the Google account, used to fill `User.name` on first login. */
+  name: string | null;
 }
 
 export type FirebaseAuthenticatedRequest = Request & {
@@ -43,7 +46,17 @@ export class FirebaseAuthGuard implements CanActivate {
       throw new UnauthorizedException('Firebase token has no email');
     }
 
-    request.firebaseUser = { uid: decoded.uid, email: decoded.email };
+    // `name` is a standard Google claim but is not part of DecodedIdToken's
+    // typed fields, so it arrives through the index signature.
+    const name = typeof decoded.name === 'string' ? decoded.name.trim() : '';
+
+    request.firebaseUser = {
+      uid: decoded.uid,
+      email: decoded.email,
+      // The email_verified claim is optional in the token; absent means not verified.
+      emailVerified: decoded.email_verified === true,
+      name: name.length > 0 ? name : null,
+    };
     return true;
   }
 

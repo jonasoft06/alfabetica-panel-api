@@ -5,20 +5,21 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
-import { Prisma, Status } from '../../generated/prisma/client';
+import { Prisma, UserStatus } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AUTH_ERROR_CODES, authError } from './auth-error';
 import type { FirebaseUser } from './guards/firebase-auth.guard';
+import { normalizeEmail } from './utils/normalize-email.util';
 
-const userWithRoleInclude = {
-  role: {
-    include: {
-      rolePermissions: { include: { permission: true } },
-    },
-  },
+// Permissions are granted per user; the role is only a team label and carries
+// no authorization weight, so it is loaded for display purposes alone.
+const userAuthInclude = {
+  role: true,
+  permissions: { include: { permission: true } },
 } satisfies Prisma.UserInclude;
 
-type UserWithRole = Prisma.UserGetPayload<{
-  include: typeof userWithRoleInclude;
+type AuthenticatedUser = Prisma.UserGetPayload<{
+  include: typeof userAuthInclude;
 }>;
 
 interface RefreshTokenPayload {
@@ -40,14 +41,24 @@ export class AuthService {
   ) {}
 
   async login(firebaseUser: FirebaseUser): Promise<LoginResult> {
-    this.assertAllowedDomain(firebaseUser.email);
+    const email = normalizeEmail(firebaseUser.email);
 
-    const user = await this.prisma.user.findUnique({
+    this.assertAllowedDomain(email);
+
+    if (!firebaseUser.emailVerified) {
+      throw authError(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED);
+    }
+
+    const linked = await this.prisma.user.findUnique({
       where: { firebaseUid: firebaseUser.uid },
-      include: userWithRoleInclude,
+      include: userAuthInclude,
     });
 
-    this.assertActiveUser(user);
+    // Already linked to Firebase: the only thing left to check is that the
+    // account has not been deactivated since the last login.
+    const user = linked
+      ? await this.touchLastLogin(this.assertActive(linked))
+      : await this.linkInvitedUser(firebaseUser, email);
 
     // Refresh token: long-lived, minimal payload. tokenVersion lets /auth/refresh
     // and /auth/logout reject tokens issued before a manual session revocation.
@@ -72,12 +83,20 @@ export class AuthService {
   ): Promise<{ accessToken: string }> {
     const payload = this.verifyRefreshToken(refreshToken);
 
+    // Re-read from the database rather than trusting the refresh token: status
+    // changes and permission grants must take effect on the next refresh.
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      include: userWithRoleInclude,
+      include: userAuthInclude,
     });
 
-    this.assertActiveUser(user);
+    if (!user) {
+      throw new UnauthorizedException('User is not registered');
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw authError(AUTH_ERROR_CODES.USER_INACTIVE);
+    }
 
     if (user.tokenVersion !== payload.tokenVersion) {
       throw new UnauthorizedException('Refresh token has been revoked');
@@ -108,18 +127,85 @@ export class AuthService {
       .catch(() => undefined);
   }
 
-  private signAccessToken(user: UserWithRole): string {
-    const permissions = user.role.rolePermissions.map(
-      (rolePermission) => rolePermission.permission.key,
+  /**
+   * First login of an invited collaborator: the row already exists (created by
+   * an administrator) but has no firebaseUid yet. This is the only place where
+   * a user goes from INVITED to ACTIVE.
+   */
+  private async linkInvitedUser(
+    firebaseUser: FirebaseUser,
+    email: string,
+  ): Promise<AuthenticatedUser> {
+    const invited = await this.prisma.user.findUnique({
+      where: { email },
+      include: userAuthInclude,
+    });
+
+    if (!invited) {
+      throw authError(AUTH_ERROR_CODES.USER_NOT_INVITED);
+    }
+
+    // A different Firebase account already owns this email. Linking would hand
+    // one person's panel account to another, so it is always refused.
+    if (invited.firebaseUid !== null) {
+      throw authError(AUTH_ERROR_CODES.ACCOUNT_CONFLICT);
+    }
+
+    if (invited.status === UserStatus.INACTIVE) {
+      throw authError(AUTH_ERROR_CODES.USER_INACTIVE);
+    }
+
+    // ACTIVE without a firebaseUid should not exist; treat it as corrupt data
+    // rather than silently adopting the account.
+    if (invited.status !== UserStatus.INVITED) {
+      throw authError(AUTH_ERROR_CODES.ACCOUNT_CONFLICT);
+    }
+
+    if (
+      invited.invitationExpiresAt !== null &&
+      invited.invitationExpiresAt.getTime() <= Date.now()
+    ) {
+      throw authError(AUTH_ERROR_CODES.INVITATION_EXPIRED);
+    }
+
+    return this.prisma.user.update({
+      where: { id: invited.id },
+      data: {
+        firebaseUid: firebaseUser.uid,
+        status: UserStatus.ACTIVE,
+        lastLogin: new Date(),
+        // The administrator may have typed a name when inviting; only fall back
+        // to the Google display name when the field is still empty.
+        ...(invited.name === null && firebaseUser.name !== null
+          ? { name: firebaseUser.name }
+          : {}),
+      },
+      include: userAuthInclude,
+    });
+  }
+
+  private async touchLastLogin(
+    user: AuthenticatedUser,
+  ): Promise<AuthenticatedUser> {
+    return this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLogin: new Date() },
+      include: userAuthInclude,
+    });
+  }
+
+  private signAccessToken(user: AuthenticatedUser): string {
+    const permissions = user.permissions.map(
+      (userPermission) => userPermission.permission.key,
     );
 
     // Access token: short-lived, carries the authorization payload used by
-    // every protected endpoint (role + permissions) so guards never hit the DB.
+    // every protected endpoint (permissions) so guards never hit the DB.
     return this.jwtService.sign(
       {
         sub: user.id,
         email: user.email,
-        role: user.role.name,
+        role: user.role?.name ?? null,
         permissions,
       },
       {
@@ -141,12 +227,12 @@ export class AuthService {
     }
   }
 
-  private assertActiveUser(
-    user: UserWithRole | null,
-  ): asserts user is UserWithRole {
-    if (!user || user.status !== Status.active) {
-      throw new UnauthorizedException('User is not registered or is inactive');
+  private assertActive(user: AuthenticatedUser): AuthenticatedUser {
+    if (user.status !== UserStatus.ACTIVE) {
+      throw authError(AUTH_ERROR_CODES.USER_INACTIVE);
     }
+
+    return user;
   }
 
   private assertAllowedDomain(email: string): void {

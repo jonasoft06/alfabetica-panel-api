@@ -1,4 +1,4 @@
-model ProjectPortfolio {
+model Portfolio {
   id           String    @id @default(uuid())
   projectId    String    @unique @map("project_id")
   slug         String    @unique
@@ -8,9 +8,11 @@ model ProjectPortfolio {
   publishedAt  DateTime? @map("published_at")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
+  updatedById  String?   @map("updated_by_id")
 
   project    Project       @relation(fields: [projectId], references: [id])
   coverMedia ProjectMedia? @relation(fields: [coverMediaId], references: [id])
+  updatedBy  User?         @relation("PortfolioUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@map("project_portfolios")
+  @@map("portfolios")
 }

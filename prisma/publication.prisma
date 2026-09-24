@@ -29,9 +29,11 @@ model Publication {
   publishedAt    DateTime?       @map("published_at")
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
+  updatedById    String?         @map("updated_by_id")
 
   project    Project              @relation(fields: [projectId], references: [id])
   coverMedia ProjectMedia?        @relation(fields: [coverMediaId], references: [id])
+  updatedBy  User?                @relation("PublicationUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   sections   PublicationSection[]
 
   @@map("publications")

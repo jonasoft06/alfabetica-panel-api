@@ -27,8 +27,11 @@ import { MediaService } from './media.service';
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
+  // These three carry no @RequirePermissions on purpose: the required
+  // permission depends on the media's scope (PORTFOLIO -> portfolio,
+  // PUBLICATION -> publication), which the service resolves from the body or
+  // the stored row before doing anything else.
   @Post('projects/:id/media')
-  @RequirePermissions('projects')
   async create(
     @Param('id') projectId: string,
     @Body() dto: CreateMediaDto,
@@ -38,16 +41,20 @@ export class MediaController {
   }
 
   @Patch('media/:id/confirm')
-  @RequirePermissions('projects')
-  async confirm(@Param('id') id: string): Promise<ConfirmMediaResult> {
-    return this.mediaService.confirmMedia(id);
+  async confirm(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<ConfirmMediaResult> {
+    return this.mediaService.confirmMedia(id, req.user);
   }
 
   @Delete('media/:id')
-  @RequirePermissions('projects')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.mediaService.deleteMedia(id);
+  async remove(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<void> {
+    return this.mediaService.deleteMedia(id, req.user);
   }
 
   // Gated on 'settings' as a stand-in — this is a maintenance operation, not

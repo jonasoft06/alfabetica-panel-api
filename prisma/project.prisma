@@ -10,9 +10,11 @@ model Project {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   createdById String    @map("created_by_id")
+  updatedById String?   @map("updated_by_id")
 
-  createdBy   User              @relation("ProjectCreatedBy", fields: [createdById], references: [id])
-  portfolio   ProjectPortfolio?
+  createdBy   User           @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User?          @relation("ProjectUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  portfolio   Portfolio?
   production  Production?
   publication Publication?
   media       ProjectMedia[]

@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
@@ -5,66 +6,134 @@ const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 
 const prisma = new PrismaClient({ adapter });
 
+const permissionsCatalog = [
+  {
+    key: "users",
+    name: "Users",
+    description: "Collaborators, invitations and permissions",
+  },
+  {
+    key: "projects",
+    name: "Projects",
+    description: "Project core data and module relations",
+  },
+  {
+    key: "portfolio",
+    name: "Portfolio",
+    description: "Portfolio content, cover, gallery and web publishing",
+  },
+  {
+    key: "production",
+    name: "Production",
+    description: "Production tracking and ClickUp sync",
+  },
+  {
+    key: "publication",
+    name: "Publication",
+    description: "Sales, links and DOI chapter publishing",
+  },
+  {
+    key: "settings",
+    name: "Settings",
+    description: "Global site configuration",
+  },
+  {
+    key: "inventory",
+    name: "Inventory",
+    description: "Inventory management (phase 2)",
+  },
+];
+
+const roleLabels = [
+  { name: "administrator", description: "Panel administration and oversight" },
+  { name: "editorial", description: "Editorial review and content work" },
+  { name: "design", description: "Design and layout work" },
+  { name: "sales", description: "Sales and commercial follow-up" },
+];
+
 async function main() {
-  const adminRole = await prisma.role.upsert({
-    where: { name: "administrator" },
-    update: {},
-    create: {
-      name: "administrator",
-      description: "Full access to all panel modules",
-    },
-  });
+  // 1. Permission catalog — fixed, only ever born here.
+  const permissions: { id: string; key: string }[] = [];
+  for (const permission of permissionsCatalog) {
+    permissions.push(
+      await prisma.permission.upsert({
+        where: { key: permission.key },
+        update: { name: permission.name, description: permission.description },
+        create: permission,
+      }),
+    );
+  }
+  console.log(`Permissions upserted: ${permissions.length}`);
 
-  // Rename tracking -> production on the existing row (not a new key),
-  // so the existing role_permissions link is preserved instead of orphaned.
-  const trackingPermission = await prisma.permission.findUnique({
-    where: { key: "tracking" },
-  });
-
-  if (trackingPermission) {
-    await prisma.permission.update({
-      where: { id: trackingPermission.id },
-      data: {
-        key: "production",
-        name: "Production",
-        description: "Production tracking and ClickUp sync",
-      },
+  // 2. Role labels — team labels only, they grant nothing.
+  const roles = new Map<string, string>();
+  for (const role of roleLabels) {
+    const saved = await prisma.role.upsert({
+      where: { name: role.name },
+      update: { description: role.description },
+      create: role,
     });
-    console.log("Renamed permission: tracking -> production");
+    roles.set(saved.name, saved.id);
+  }
+  console.log(`Roles upserted: ${roles.size}`);
+
+  // 3. Single site settings row, on schema defaults.
+  const existingSettings = await prisma.siteSettings.findFirst();
+  if (!existingSettings) {
+    await prisma.siteSettings.create({ data: {} });
+    console.log("Site settings row created");
   }
 
-  const permissionsCatalog = [
-    { key: "users", name: "Users", description: "Account and role administration" },
-    { key: "projects", name: "Projects", description: "Book, portfolio and public catalog management" },
-    { key: "production", name: "Production", description: "Production tracking and ClickUp sync" },
-    { key: "publication", name: "Publication", description: "Sales, links and DOI chapter publishing" },
-    { key: "settings", name: "Settings", description: "Global site configuration" },
-    { key: "inventory", name: "Inventory", description: "Inventory management (phase 2)" },
-  ];
+  // 4. First admin user — invited, never auto-activated.
+  // Same normalization the login flow applies, so the invited row can actually
+  // be matched when the admin signs in with Google.
+  const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
+  if (!adminEmail) {
+    throw new Error(
+      "SEED_ADMIN_EMAIL is required to seed the first admin user. Set it in your environment and run the seed again.",
+    );
+  }
+  const adminName = process.env.SEED_ADMIN_NAME ?? null;
 
-  for (const permission of permissionsCatalog) {
-    const registered = await prisma.permission.upsert({
-      where: { key: permission.key },
-      update: { name: permission.name, description: permission.description },
-      create: permission,
-    });
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: adminEmail },
+  });
 
-    await prisma.rolePermission.upsert({
+  const admin = await prisma.user.upsert({
+    where: { email: adminEmail },
+    update: {
+      // Never overwrite status, firebaseUid or an already set name.
+      name: existingAdmin?.name ?? adminName,
+      roleId: roles.get("administrator") ?? null,
+    },
+    create: {
+      email: adminEmail,
+      name: adminName,
+      firebaseUid: null,
+      status: "INVITED",
+      roleId: roles.get("administrator") ?? null,
+      invitedAt: new Date(),
+      invitationExpiresAt: null,
+    },
+  });
+  console.log(`Admin user upserted: ${admin.email}`);
+
+  // 5. Grant the whole catalog to the first admin.
+  for (const permission of permissions) {
+    await prisma.userPermission.upsert({
       where: {
-        roleId_permissionId: {
-          roleId: adminRole.id,
-          permissionId: registered.id,
+        userId_permissionId: {
+          userId: admin.id,
+          permissionId: permission.id,
         },
       },
       update: {},
-      create: {
-        roleId: adminRole.id,
-        permissionId: registered.id,
-      },
+      create: { userId: admin.id, permissionId: permission.id },
     });
   }
+  console.log(`Admin permissions granted: ${permissions.length}`);
 
-  console.log("Seed completed: administrator role + permissions catalog + role_permissions");
+  console.log("Seed completed");
 }
 
 main()
