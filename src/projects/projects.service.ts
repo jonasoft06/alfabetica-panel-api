@@ -42,6 +42,10 @@ const DEFAULT_PORTFOLIO_MAX_ITEMS = 10;
 
 const SITE_SETTINGS_ID = 1;
 
+// Exact pixel size a portfolio cover must have (3:4 portrait).
+export const PORTFOLIO_COVER_WIDTH = 1200;
+export const PORTFOLIO_COVER_HEIGHT = 1600;
+
 const projectDetailSelect = {
   id: true,
   title: true,
@@ -244,7 +248,7 @@ export class ProjectsService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
       const project = await tx.project.findFirst({
         where: { id, deletedAt: null },
         select: {
@@ -258,9 +262,9 @@ export class ProjectsService {
         throw new NotFoundException('Project not found');
       }
 
-      await tx.project.update({
-        where: { id },
-        data: { deletedAt: new Date() },
+      const media = await tx.projectMedia.findMany({
+        where: { projectId: id },
+        select: { storageKey: true },
       });
 
       const suffix = `deleted-${id.slice(0, 8)}`;
@@ -270,6 +274,8 @@ export class ProjectsService {
           where: { id: project.portfolio.id },
           data: {
             slug: `${project.portfolio.slug}-${suffix}`,
+            // Released before the media rows go, so the cover FK never dangles.
+            coverMediaId: null,
             // Also released from the published set, otherwise a deleted project
             // would keep occupying a slot against portfolioMaxItems forever.
             isPublished: false,
@@ -280,16 +286,42 @@ export class ProjectsService {
       }
 
       if (project.publication) {
+        // Sections reference their PDF with a RESTRICT foreign key, so they
+        // have to go before the media rows they point at.
+        await tx.publicationSection.deleteMany({
+          where: { publicationId: project.publication.id },
+        });
+
         await tx.publication.update({
           where: { id: project.publication.id },
           data: {
             slug: `${project.publication.slug}-${suffix}`,
+            coverMediaId: null,
             isPublished: false,
             publishedAt: null,
           },
         });
       }
+
+      // Every scope goes: a soft-deleted project has no use for its files, and
+      // leaving them would keep paying for storage nobody can reach.
+      await tx.projectMedia.deleteMany({ where: { projectId: id } });
+
+      await tx.project.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
+
+      return media.map((item) => item.storageKey);
     });
+
+    // Storage cleanup runs after the transaction commits: a failed delete here
+    // only leaves an orphaned object, which is harmless.
+    await Promise.all(
+      staleStorageKeys.map((storageKey) =>
+        deleteStorageObjectSilently(this.storageService, storageKey),
+      ),
+    );
   }
 
   async findPortfolio(projectId: string): Promise<PortfolioDetailDto> {
@@ -429,6 +461,17 @@ export class ProjectsService {
       throw new BadRequestException('File exceeds maximum allowed size');
     }
 
+    if (
+      dto.width !== PORTFOLIO_COVER_WIDTH ||
+      dto.height !== PORTFOLIO_COVER_HEIGHT
+    ) {
+      throw new BadRequestException({
+        reason: 'COVER_INVALID_DIMENSIONS',
+        expectedWidth: PORTFOLIO_COVER_WIDTH,
+        expectedHeight: PORTFOLIO_COVER_HEIGHT,
+      });
+    }
+
     const mediaId = randomUUID();
     const storageKey = buildStorageKey({
       scope: 'PORTFOLIO',
@@ -448,6 +491,8 @@ export class ProjectsService {
         sizeBytes: dto.sizeBytes,
         alt: dto.alt,
         caption: dto.caption,
+        width: dto.width,
+        height: dto.height,
         displayOrder: null,
         status: 'PENDING',
       },
@@ -463,6 +508,8 @@ export class ProjectsService {
       uploadUrl,
       storageKey,
       expiresIn: UPLOAD_URL_EXPIRES_IN_SECONDS,
+      width: dto.width,
+      height: dto.height,
     };
   }
 

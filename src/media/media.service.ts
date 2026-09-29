@@ -58,12 +58,16 @@ export interface CreateMediaResult {
   uploadUrl: string;
   storageKey: string;
   expiresIn: number;
+  width: number | null;
+  height: number | null;
 }
 
 export interface ConfirmMediaResult {
   id: string;
   status: MediaStatus;
   confirmedAt: Date;
+  width: number | null;
+  height: number | null;
 }
 
 export interface CleanupPendingMediaResult {
@@ -111,6 +115,19 @@ export class MediaService {
       throw new BadRequestException('File exceeds maximum allowed size');
     }
 
+    const width = dto.width ?? null;
+    const height = dto.height ?? null;
+
+    if (dto.type === MediaType.IMAGE && (width === null || height === null)) {
+      throw new BadRequestException('Width and height are required for images');
+    }
+
+    if (dto.type === MediaType.PDF && (width !== null || height !== null)) {
+      throw new BadRequestException(
+        'Width and height are not allowed for PDFs',
+      );
+    }
+
     const { _max } = await this.prisma.projectMedia.aggregate({
       where: { projectId, scope: dto.scope },
       _max: { displayOrder: true },
@@ -136,6 +153,8 @@ export class MediaService {
         sizeBytes: dto.sizeBytes,
         alt: dto.alt,
         caption: dto.caption,
+        width,
+        height,
         displayOrder,
         status: 'PENDING',
       },
@@ -151,6 +170,8 @@ export class MediaService {
       uploadUrl,
       storageKey,
       expiresIn: UPLOAD_URL_EXPIRES_IN_SECONDS,
+      width,
+      height,
     };
   }
 
@@ -160,7 +181,14 @@ export class MediaService {
   ): Promise<ConfirmMediaResult> {
     const media = await this.prisma.projectMedia.findUnique({
       where: { id: mediaId },
-      select: { id: true, status: true, displayOrder: true, scope: true },
+      select: {
+        id: true,
+        status: true,
+        displayOrder: true,
+        scope: true,
+        width: true,
+        height: true,
+      },
     });
 
     if (!media) {
@@ -185,7 +213,13 @@ export class MediaService {
       data: { status: MediaStatus.CONFIRMED, confirmedAt },
     });
 
-    return { id: mediaId, status: MediaStatus.CONFIRMED, confirmedAt };
+    return {
+      id: mediaId,
+      status: MediaStatus.CONFIRMED,
+      confirmedAt,
+      width: media.width,
+      height: media.height,
+    };
   }
 
   async deleteMedia(mediaId: string, user: AccessTokenPayload): Promise<void> {
