@@ -13,9 +13,13 @@ const UPLOAD_URL_EXPIRES_IN_SECONDS = 900;
 export class StorageService {
   private readonly client: S3Client;
   private readonly bucket: string;
+  private readonly cdnUrl: string;
 
   constructor(private readonly configService: ConfigService) {
     this.bucket = this.configService.getOrThrow<string>('SPACES_BUCKET');
+    this.cdnUrl = this.configService
+      .getOrThrow<string>('SPACES_CDN_URL')
+      .replace(/\/+$/, '');
 
     this.client = new S3Client({
       forcePathStyle: false,
@@ -54,5 +58,10 @@ export class StorageService {
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: storageKey }),
     );
+  }
+
+  // Public files are served from the CDN, never from the bucket endpoint.
+  publicUrl(storageKey: string): string {
+    return `${this.cdnUrl}/${storageKey}`;
   }
 }

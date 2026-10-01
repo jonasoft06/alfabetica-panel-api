@@ -30,8 +30,8 @@ export class CreateMediaDto {
   @IsString()
   caption?: string;
 
-  // Required for IMAGE and forbidden for PDF. That rule depends on `type`, so
-  // it is enforced in MediaService; the DTO only checks the value's shape.
+  // Required: this route only creates images (PDFs are rejected in
+  // MediaService). The DTO only checks the value's shape.
   @IsOptional()
   @IsInt()
   @Min(1)

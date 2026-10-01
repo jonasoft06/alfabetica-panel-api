@@ -3,10 +3,12 @@ import { AuthModule } from '../auth/auth.module';
 import { StorageModule } from '../storage/storage.module';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
+import { PublicationSectionsController } from './publication-sections.controller';
+import { PublicationSectionsService } from './publication-sections.service';
 
 @Module({
   imports: [AuthModule, StorageModule],
-  controllers: [ProjectsController],
-  providers: [ProjectsService],
+  controllers: [ProjectsController, PublicationSectionsController],
+  providers: [ProjectsService, PublicationSectionsService],
 })
 export class ProjectsModule {}

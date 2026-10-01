@@ -6,7 +6,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
-import { MediaScope, PublicationType } from '../../generated/prisma/enums';
+import {
+  MediaScope,
+  MediaType,
+  PublicationType,
+} from '../../generated/prisma/enums';
 import {
   EXTENSION_BY_MEDIA_TYPE,
   MAX_SIZE_BY_MEDIA_TYPE,
@@ -173,6 +177,7 @@ const publicationDetailSelect = {
   sku: true,
   price: true,
   quantity: true,
+  pages: true,
   compareAtPrice: true,
   currency: true,
   externalUrl: true,
@@ -941,6 +946,8 @@ export class ProjectsService {
 
         const staleStorageKeys: string[] = [];
         const typeTransitionData: Prisma.PublicationUncheckedUpdateInput = {};
+        // Counts of what the type change removed, for the activity metadata.
+        const deletedCounts: Record<string, number> = {};
 
         if (isTypeChanging) {
           if (existing.type === PublicationType.SALE) {
@@ -951,27 +958,54 @@ export class ProjectsService {
           } else if (existing.type === PublicationType.LINK) {
             typeTransitionData.externalUrl = null;
           } else if (existing.type === PublicationType.DOI) {
-            const sections = await tx.publicationSection.findMany({
-              where: { publicationId: existing.id },
-              select: {
-                pdfMediaId: true,
-                pdfMedia: { select: { storageKey: true } },
+            // Every PUBLICATION PDF goes, attached to a section or not: PDFs
+            // only exist for DOI sections, so none has a use after this.
+            const pdfs = await tx.projectMedia.findMany({
+              where: {
+                projectId,
+                scope: MediaScope.PUBLICATION,
+                type: MediaType.PDF,
               },
+              select: { storageKey: true },
             });
 
-            if (sections.length > 0) {
+            // Sections first: they reference their PDF with a RESTRICT FK.
+            const { count: deletedSectionCount } =
               await tx.publicationSection.deleteMany({
                 where: { publicationId: existing.id },
               });
-              await tx.projectMedia.deleteMany({
-                where: {
-                  id: { in: sections.map((section) => section.pdfMediaId) },
-                },
-              });
-              staleStorageKeys.push(
-                ...sections.map((section) => section.pdfMedia.storageKey),
-              );
-            }
+            await tx.projectMedia.deleteMany({
+              where: {
+                projectId,
+                scope: MediaScope.PUBLICATION,
+                type: MediaType.PDF,
+              },
+            });
+
+            staleStorageKeys.push(...pdfs.map((pdf) => pdf.storageKey));
+            deletedCounts.deletedSectionCount = deletedSectionCount;
+            deletedCounts.deletedPdfCount = pdfs.length;
+          }
+
+          if (dto.type === PublicationType.DOI) {
+            // A DOI publication shows sections instead of a gallery. Gallery
+            // images are the ones with a displayOrder; covers (null) stay.
+            const galleryWhere = {
+              projectId,
+              scope: MediaScope.PUBLICATION,
+              type: MediaType.IMAGE,
+              displayOrder: { not: null },
+            } satisfies Prisma.ProjectMediaWhereInput;
+
+            const images = await tx.projectMedia.findMany({
+              where: galleryWhere,
+              select: { storageKey: true },
+            });
+
+            await tx.projectMedia.deleteMany({ where: galleryWhere });
+
+            staleStorageKeys.push(...images.map((image) => image.storageKey));
+            deletedCounts.deletedGalleryImageCount = images.length;
           }
         }
 
@@ -1001,7 +1035,12 @@ export class ProjectsService {
           entityId: existing.id,
           projectId,
           metadata: isTypeChanging
-            ? { fields, typeFrom: existing.type, typeTo: dto.type }
+            ? {
+                fields,
+                typeFrom: existing.type,
+                typeTo: dto.type,
+                ...deletedCounts,
+              }
             : { fields },
         });
 

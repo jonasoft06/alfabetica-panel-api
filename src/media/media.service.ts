@@ -10,6 +10,7 @@ import {
   MediaScope,
   MediaStatus,
   MediaType,
+  PublicationType,
 } from '../../generated/prisma/enums';
 import { logActivity } from '../activity-log/log-activity.util';
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
@@ -24,11 +25,6 @@ const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_SIZE_BYTES = 25 * 1024 * 1024;
 export const UPLOAD_URL_EXPIRES_IN_SECONDS = 900;
 const PENDING_CLEANUP_AGE_MS = 2 * 60 * 60 * 1000;
-
-const ALLOWED_TYPES_BY_SCOPE: Record<MediaScope, MediaType[]> = {
-  PORTFOLIO: [MediaType.IMAGE],
-  PUBLICATION: [MediaType.IMAGE, MediaType.PDF],
-};
 
 // Media is gated by the module that owns it, not by 'projects': uploading a
 // portfolio image is a portfolio edit, uploading a publication PDF is a
@@ -104,8 +100,22 @@ export class MediaService {
 
     assertScopePermission(user, dto.scope);
 
-    if (!ALLOWED_TYPES_BY_SCOPE[dto.scope].includes(dto.type)) {
-      throw new BadRequestException('Invalid type for this scope');
+    // PDFs only enter through POST /projects/:id/publication/sections/:sectionId/pdf,
+    // so every media row created here is a gallery image.
+    if (dto.type === MediaType.PDF) {
+      throw new BadRequestException({ reason: 'PDF_REQUIRES_SECTION_ROUTE' });
+    }
+
+    if (dto.scope === MediaScope.PUBLICATION) {
+      const publication = await this.prisma.publication.findUnique({
+        where: { projectId },
+        select: { type: true },
+      });
+
+      // A DOI publication shows its sections instead of a gallery.
+      if (publication?.type === PublicationType.DOI) {
+        throw new ConflictException({ reason: 'PUBLICATION_DOI_NO_GALLERY' });
+      }
     }
 
     if (dto.mimeType !== MIME_TYPE_BY_MEDIA_TYPE[dto.type]) {
@@ -119,14 +129,8 @@ export class MediaService {
     const width = dto.width ?? null;
     const height = dto.height ?? null;
 
-    if (dto.type === MediaType.IMAGE && (width === null || height === null)) {
+    if (width === null || height === null) {
       throw new BadRequestException('Width and height are required for images');
-    }
-
-    if (dto.type === MediaType.PDF && (width !== null || height !== null)) {
-      throw new BadRequestException(
-        'Width and height are not allowed for PDFs',
-      );
     }
 
     const { _max } = await this.prisma.projectMedia.aggregate({
@@ -200,6 +204,14 @@ export class MediaService {
 
     assertScopePermission(user, media.scope);
 
+    // Section PDFs are created with a null displayOrder like covers, so this
+    // goes first to point at the right route.
+    if (media.type === MediaType.PDF) {
+      throw new BadRequestException(
+        'Section PDFs must be confirmed via PATCH /projects/:id/publication/sections/:sectionId/pdf/confirm',
+      );
+    }
+
     // Covers (portfolio and publication alike) are the only media created
     // with a null displayOrder; they have their own confirm route per facet.
     if (media.displayOrder === null) {
@@ -241,7 +253,13 @@ export class MediaService {
   async deleteMedia(mediaId: string, user: AccessTokenPayload): Promise<void> {
     const media = await this.prisma.projectMedia.findUnique({
       where: { id: mediaId },
-      select: { projectId: true, storageKey: true, scope: true, type: true },
+      select: {
+        projectId: true,
+        storageKey: true,
+        scope: true,
+        type: true,
+        publicationSectionPdf: { select: { id: true, publicationId: true } },
+      },
     });
 
     if (!media) {
@@ -249,6 +267,8 @@ export class MediaService {
     }
 
     assertScopePermission(user, media.scope);
+
+    const section = media.publicationSectionPdf;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.portfolio.updateMany({
@@ -261,16 +281,39 @@ export class MediaService {
         data: { coverMediaId: null, updatedById: user.sub },
       });
 
+      // Released before the media row goes (RESTRICT FK). Unlike covers, this
+      // does not touch Publication.updatedById: sections are their own rows.
+      if (section) {
+        await tx.publicationSection.update({
+          where: { id: section.id },
+          data: { pdfMediaId: null },
+        });
+      }
+
       await tx.projectMedia.delete({ where: { id: mediaId } });
 
-      await logActivity(tx, {
-        actorId: user.sub,
-        action: 'media.delete',
-        entityType: 'media',
-        entityId: mediaId,
-        projectId: media.projectId,
-        metadata: { scope: media.scope, type: media.type },
-      });
+      // A section PDF is logged on the publication, where its history lives,
+      // instead of as a generic media.delete.
+      await logActivity(
+        tx,
+        section
+          ? {
+              actorId: user.sub,
+              action: 'publication.section_pdf_removed',
+              entityType: 'publication',
+              entityId: section.publicationId,
+              projectId: media.projectId,
+              metadata: { sectionId: section.id, mediaId },
+            }
+          : {
+              actorId: user.sub,
+              action: 'media.delete',
+              entityType: 'media',
+              entityId: mediaId,
+              projectId: media.projectId,
+              metadata: { scope: media.scope, type: media.type },
+            },
+      );
     });
 
     await deleteStorageObjectSilently(this.storageService, media.storageKey);

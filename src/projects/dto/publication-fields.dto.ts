@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsInt,
   IsOptional,
   IsString,
   ValidateIf,
@@ -8,6 +9,7 @@ import {
   ValidationOptions,
   ValidatorConstraint,
   ValidatorConstraintInterface,
+  Min,
   registerDecorator,
 } from 'class-validator';
 import { PublicationType } from '../../../generated/prisma/enums';
@@ -180,6 +182,12 @@ export abstract class PublicationFieldsDto {
   @ValidateIf((o: PublicationTypeCarrier) => o.type !== undefined)
   @OptionalForPublicationType(PublicationType.SALE, 'number')
   compareAtPrice?: number;
+
+  // null clears it.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  pages?: number | null;
 
   @IsOptional()
   @IsString()

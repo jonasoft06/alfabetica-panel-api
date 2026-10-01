@@ -20,6 +20,9 @@ model ProjectMedia {
   type         MediaType
   status       MediaStatus @default(PENDING)
   storageKey   String      @map("storage_key")
+  // Client-side file name, kept for display only; the stored object is always
+  // named after the media id.
+  originalName String?     @map("original_name")
   alt          String?
   caption      String?
   displayOrder Int?        @map("display_order")

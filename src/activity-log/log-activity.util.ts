@@ -18,6 +18,12 @@ export type ActivityAction =
   | 'publication.update'
   | 'publication.delete'
   | 'publication.cover_set'
+  | 'publication.section_create'
+  | 'publication.section_update'
+  | 'publication.section_delete'
+  | 'publication.sections_reorder'
+  | 'publication.section_pdf_set'
+  | 'publication.section_pdf_removed'
   | 'media.confirm'
   | 'media.delete'
   | 'media.cleanup';

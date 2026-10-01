@@ -23,6 +23,7 @@ model Publication {
   price          Decimal?        @db.Decimal(10, 2)
   compareAtPrice Decimal?        @map("compare_at_price") @db.Decimal(10, 2)
   quantity       Int?            @map("quantity")
+  pages          Int?
   currency       String?         @default("MXN")
   externalUrl    String?         @map("external_url")
   isPublished    Boolean         @default(false) @map("is_published")
@@ -43,13 +44,21 @@ model PublicationSection {
   id            String   @id @default(uuid())
   publicationId String   @map("publication_id")
   label         String
+  description   String?
   sortOrder     Int      @map("sort_order")
-  pdfMediaId    String   @unique @map("pdf_media_id")
+  // Null until a PDF is uploaded and confirmed through the section PDF flow;
+  // cleared again when that PDF is deleted via DELETE /media/:id.
+  pdfMediaId    String?  @unique @map("pdf_media_id")
   createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  publication Publication  @relation(fields: [publicationId], references: [id])
-  pdfMedia    ProjectMedia @relation(fields: [pdfMediaId], references: [id])
+  publication Publication   @relation(fields: [publicationId], references: [id])
+  // Restrict, not the optional-relation default (SetNull): unlinking a PDF is
+  // always done explicitly in code so it is logged.
+  pdfMedia    ProjectMedia? @relation(fields: [pdfMediaId], references: [id], onDelete: Restrict)
 
-  @@index([publicationId, sortOrder])
+  // Gaps are allowed (1, 2, 5); duplicates are not. Reordering goes through
+  // temporary negative values so it never collides with this constraint.
+  @@unique([publicationId, sortOrder])
   @@map("publication_sections")
 }

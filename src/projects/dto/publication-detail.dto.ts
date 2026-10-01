@@ -18,6 +18,7 @@ export class PublicationDetailDto {
   sku: string | null;
   price: Prisma.Decimal | null;
   quantity: number | null;
+  pages: number | null;
   compareAtPrice: Prisma.Decimal | null;
   currency: string | null;
   externalUrl: string | null;
