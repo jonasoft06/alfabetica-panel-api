@@ -62,7 +62,9 @@ export class MediaController {
   // that exists; there is no such guard yet.
   @Post('media/cleanup-pending')
   @RequirePermissions('settings')
-  async cleanupPending(): Promise<CleanupPendingMediaResult> {
-    return this.mediaService.cleanupPendingMedia();
+  async cleanupPending(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<CleanupPendingMediaResult> {
+    return this.mediaService.cleanupPendingMedia(req.user);
   }
 }

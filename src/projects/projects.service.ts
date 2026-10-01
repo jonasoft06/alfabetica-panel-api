@@ -14,12 +14,16 @@ import {
   UPLOAD_URL_EXPIRES_IN_SECONDS,
 } from '../media/media.service';
 import type { CreateMediaResult } from '../media/media.service';
+import { changedFields } from '../activity-log/changed-fields.util';
+import {
+  logActivity,
+  type ActivityAction,
+} from '../activity-log/log-activity.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { deleteStorageObjectSilently } from '../storage/delete-storage-object-silently.util';
 import { buildStorageKey } from '../storage/storage-key.util';
 import { StorageService } from '../storage/storage.service';
-import type { ConfirmPortfolioCoverDto } from './dto/confirm-portfolio-cover.dto';
-import type { CreatePortfolioCoverDto } from './dto/create-portfolio-cover.dto';
+import type { CreateCoverDto } from './dto/create-cover.dto';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { CreatePublicationDto } from './dto/create-publication.dto';
 import type { FindProjectsQueryDto } from './dto/find-projects-query.dto';
@@ -45,6 +49,67 @@ const SITE_SETTINGS_ID = 1;
 // Exact pixel size a portfolio cover must have (3:4 portrait).
 export const PORTFOLIO_COVER_WIDTH = 1200;
 export const PORTFOLIO_COVER_HEIGHT = 1600;
+
+// Exact pixel size a publication cover must have (square).
+export const PUBLICATION_COVER_WIDTH = 1600;
+export const PUBLICATION_COVER_HEIGHT = 1600;
+
+export type CoverFacet = 'portfolio' | 'publication';
+
+interface CoverFacetConfig {
+  scope: MediaScope;
+  width: number;
+  height: number;
+  action: ActivityAction;
+  findByProject(
+    client: PrismaClientLike,
+    projectId: string,
+  ): Promise<{ id: string; coverMediaId: string | null } | null>;
+  // Sets the cover only if none is set yet; count is 0 when it lost the race.
+  setCover(
+    tx: Prisma.TransactionClient,
+    facetId: string,
+    mediaId: string,
+    userId: string,
+  ): Promise<Prisma.BatchPayload>;
+}
+
+// Everything that differs between the two cover flows. The rules themselves
+// live once, in createCover/confirmCover.
+const COVER_FACETS: Record<CoverFacet, CoverFacetConfig> = {
+  portfolio: {
+    scope: MediaScope.PORTFOLIO,
+    width: PORTFOLIO_COVER_WIDTH,
+    height: PORTFOLIO_COVER_HEIGHT,
+    action: 'portfolio.cover_set',
+    findByProject: (client, projectId) =>
+      client.portfolio.findUnique({
+        where: { projectId },
+        select: { id: true, coverMediaId: true },
+      }),
+    setCover: (tx, facetId, mediaId, userId) =>
+      tx.portfolio.updateMany({
+        where: { id: facetId, coverMediaId: null },
+        data: { coverMediaId: mediaId, updatedById: userId },
+      }),
+  },
+  publication: {
+    scope: MediaScope.PUBLICATION,
+    width: PUBLICATION_COVER_WIDTH,
+    height: PUBLICATION_COVER_HEIGHT,
+    action: 'publication.cover_set',
+    findByProject: (client, projectId) =>
+      client.publication.findUnique({
+        where: { projectId },
+        select: { id: true, coverMediaId: true },
+      }),
+    setCover: (tx, facetId, mediaId, userId) =>
+      tx.publication.updateMany({
+        where: { id: facetId, coverMediaId: null },
+        data: { coverMediaId: mediaId, updatedById: userId },
+      }),
+  },
+};
 
 const projectDetailSelect = {
   id: true,
@@ -138,28 +203,57 @@ export class ProjectsService {
           issueYear: dto.issueYear,
           tags: dto.tags ?? [],
           createdById: userId,
+          updatedById: userId,
         },
         select: { id: true },
       });
 
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'project.create',
+        entityType: 'project',
+        entityId: project.id,
+        projectId: project.id,
+      });
+
       if (dto.portfolio) {
-        await tx.portfolio.create({
+        const portfolio = await tx.portfolio.create({
           data: {
             projectId: project.id,
             slug: await this.uniquePortfolioSlug(tx, slugify(dto.title)),
+            updatedById: userId,
           },
+          select: { id: true },
+        });
+
+        await logActivity(tx, {
+          actorId: userId,
+          action: 'portfolio.create',
+          entityType: 'portfolio',
+          entityId: portfolio.id,
+          projectId: project.id,
         });
       }
 
       if (dto.publication) {
-        await tx.publication.create({
+        const publication = await tx.publication.create({
           data: {
             projectId: project.id,
             type: dto.publication.type,
             // Publication slugs live in their own unique namespace, so this is
             // resolved against publications, not against portfolio slugs.
             slug: await this.uniquePublicationSlug(tx, slugify(dto.title)),
+            updatedById: userId,
           },
+          select: { id: true },
+        });
+
+        await logActivity(tx, {
+          actorId: userId,
+          action: 'publication.create',
+          entityType: 'publication',
+          entityId: publication.id,
+          projectId: project.id,
         });
       }
 
@@ -229,25 +323,61 @@ export class ProjectsService {
     return publication;
   }
 
-  async update(id: string, dto: UpdateProjectDto): Promise<ProjectDetailDto> {
-    await findActiveOrFail(this.prisma, id);
+  async update(
+    id: string,
+    dto: UpdateProjectDto,
+    userId: string,
+  ): Promise<ProjectDetailDto> {
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.project.findFirst({
+        where: { id, deletedAt: null },
+        select: {
+          title: true,
+          subtitle: true,
+          description: true,
+          client: true,
+          issueYear: true,
+          tags: true,
+        },
+      });
 
-    await this.prisma.project.update({
-      where: { id },
-      data: {
+      if (!current) {
+        throw new NotFoundException('Project not found');
+      }
+
+      const data = {
         title: dto.title,
         subtitle: dto.subtitle,
         description: dto.description,
         client: dto.client,
         issueYear: dto.issueYear,
         tags: dto.tags,
-      },
-    });
+      };
+      const fields = changedFields(current, data);
 
-    return this.loadDetailOrFail(this.prisma, id);
+      // A body that changes nothing is not a write: no updatedAt/updatedById
+      // bump and no log row.
+      if (fields.length > 0) {
+        await tx.project.update({
+          where: { id },
+          data: { ...data, updatedById: userId },
+        });
+
+        await logActivity(tx, {
+          actorId: userId,
+          action: 'project.update',
+          entityType: 'project',
+          entityId: id,
+          projectId: id,
+          metadata: { fields },
+        });
+      }
+
+      return this.loadDetailOrFail(tx, id);
+    });
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, userId: string): Promise<void> {
     const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
       const project = await tx.project.findFirst({
         where: { id, deletedAt: null },
@@ -281,6 +411,7 @@ export class ProjectsService {
             isPublished: false,
             publishedAt: null,
             displayOrder: null,
+            updatedById: userId,
           },
         });
       }
@@ -299,6 +430,7 @@ export class ProjectsService {
             coverMediaId: null,
             isPublished: false,
             publishedAt: null,
+            updatedById: userId,
           },
         });
       }
@@ -309,7 +441,16 @@ export class ProjectsService {
 
       await tx.project.update({
         where: { id },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: new Date(), updatedById: userId },
+      });
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'project.delete',
+        entityType: 'project',
+        entityId: id,
+        projectId: id,
+        metadata: { deletedMediaCount: media.length },
       });
 
       return media.map((item) => item.storageKey);
@@ -339,7 +480,10 @@ export class ProjectsService {
     return portfolio;
   }
 
-  async createPortfolio(projectId: string): Promise<PortfolioDetailDto> {
+  async createPortfolio(
+    projectId: string,
+    userId: string,
+  ): Promise<PortfolioDetailDto> {
     return this.prisma.$transaction(async (tx) => {
       const project = await findActiveOrFail(tx, projectId);
 
@@ -352,45 +496,73 @@ export class ProjectsService {
         throw new ConflictException('Project already has a portfolio');
       }
 
-      return tx.portfolio.create({
+      const portfolio = await tx.portfolio.create({
         data: {
           projectId,
           slug: await this.uniquePortfolioSlug(tx, slugify(project.title)),
+          updatedById: userId,
         },
         select: portfolioDetailSelect,
       });
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'portfolio.create',
+        entityType: 'portfolio',
+        entityId: portfolio.id,
+        projectId,
+      });
+
+      return portfolio;
     });
   }
 
   async updatePortfolio(
     projectId: string,
     dto: UpsertPortfolioDto,
+    userId: string,
   ): Promise<PortfolioDetailDto> {
-    await findActiveOrFail(this.prisma, projectId);
+    return this.prisma.$transaction(async (tx) => {
+      await findActiveOrFail(tx, projectId);
 
-    const portfolio = await this.prisma.portfolio.findUnique({
-      where: { projectId },
-      select: { id: true },
-    });
+      const portfolio = await tx.portfolio.findUnique({
+        where: { projectId },
+        select: portfolioDetailSelect,
+      });
 
-    if (!portfolio) {
-      throw new NotFoundException('Project has no portfolio');
-    }
+      if (!portfolio) {
+        throw new NotFoundException('Project has no portfolio');
+      }
 
-    // Nothing to write is not an error: return the facet untouched rather than
-    // bumping updatedAt for an empty body.
-    if (dto.displayOrder === undefined) {
-      return this.findPortfolio(projectId);
-    }
+      const data = { displayOrder: dto.displayOrder };
+      const fields = changedFields(portfolio, data);
 
-    return this.prisma.portfolio.update({
-      where: { id: portfolio.id },
-      data: { displayOrder: dto.displayOrder },
-      select: portfolioDetailSelect,
+      // Nothing to write is not an error: return the facet untouched rather
+      // than bumping updatedAt for a body that changes nothing.
+      if (fields.length === 0) {
+        return portfolio;
+      }
+
+      const updated = await tx.portfolio.update({
+        where: { id: portfolio.id },
+        data: { ...data, updatedById: userId },
+        select: portfolioDetailSelect,
+      });
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'portfolio.update',
+        entityType: 'portfolio',
+        entityId: portfolio.id,
+        projectId,
+        metadata: { fields },
+      });
+
+      return updated;
     });
   }
 
-  async deletePortfolio(projectId: string): Promise<void> {
+  async deletePortfolio(projectId: string, userId: string): Promise<void> {
     const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
       await findActiveOrFail(tx, projectId);
 
@@ -420,6 +592,15 @@ export class ProjectsService {
 
       await tx.portfolio.delete({ where: { id: portfolio.id } });
 
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'portfolio.delete',
+        entityType: 'portfolio',
+        entityId: portfolio.id,
+        projectId,
+        metadata: { deletedMediaCount: media.length },
+      });
+
       return media.map((item) => item.storageKey);
     });
 
@@ -432,24 +613,22 @@ export class ProjectsService {
     );
   }
 
-  async createPortfolioCover(
+  async createCover(
     projectId: string,
-    dto: CreatePortfolioCoverDto,
+    facet: CoverFacet,
+    dto: CreateCoverDto,
   ): Promise<CreateMediaResult> {
+    const config = COVER_FACETS[facet];
+
     await findActiveOrFail(this.prisma, projectId);
 
-    const portfolio = await this.prisma.portfolio.findUnique({
-      where: { projectId },
-      select: { coverMediaId: true },
-    });
+    const target = await config.findByProject(this.prisma, projectId);
 
-    if (!portfolio) {
-      throw new NotFoundException(
-        'Project has no portfolio to set a cover for',
-      );
+    if (!target) {
+      throw new NotFoundException(`Project has no ${facet} to set a cover for`);
     }
 
-    if (portfolio.coverMediaId) {
+    if (target.coverMediaId) {
       throw new ConflictException({ reason: 'COVER_ALREADY_EXISTS' });
     }
 
@@ -461,20 +640,17 @@ export class ProjectsService {
       throw new BadRequestException('File exceeds maximum allowed size');
     }
 
-    if (
-      dto.width !== PORTFOLIO_COVER_WIDTH ||
-      dto.height !== PORTFOLIO_COVER_HEIGHT
-    ) {
+    if (dto.width !== config.width || dto.height !== config.height) {
       throw new BadRequestException({
         reason: 'COVER_INVALID_DIMENSIONS',
-        expectedWidth: PORTFOLIO_COVER_WIDTH,
-        expectedHeight: PORTFOLIO_COVER_HEIGHT,
+        expectedWidth: config.width,
+        expectedHeight: config.height,
       });
     }
 
     const mediaId = randomUUID();
     const storageKey = buildStorageKey({
-      scope: 'PORTFOLIO',
+      scope: config.scope,
       projectId,
       mediaId,
       extension: EXTENSION_BY_MEDIA_TYPE.IMAGE,
@@ -484,7 +660,7 @@ export class ProjectsService {
       data: {
         id: mediaId,
         projectId,
-        scope: 'PORTFOLIO',
+        scope: config.scope,
         type: 'IMAGE',
         storageKey,
         mimeType: dto.mimeType,
@@ -493,6 +669,8 @@ export class ProjectsService {
         caption: dto.caption,
         width: dto.width,
         height: dto.height,
+        // A null displayOrder is what marks this row as a cover, and what
+        // makes the generic PATCH /media/:id/confirm refuse it.
         displayOrder: null,
         status: 'PENDING',
       },
@@ -513,36 +691,38 @@ export class ProjectsService {
     };
   }
 
-  async confirmPortfolioCover(
+  async confirmCover(
     projectId: string,
-    dto: ConfirmPortfolioCoverDto,
+    facet: CoverFacet,
+    mediaId: string,
+    userId: string,
   ): Promise<ProjectDetailDto> {
+    const config = COVER_FACETS[facet];
+
     return this.prisma.$transaction(async (tx) => {
       await findActiveOrFail(tx, projectId);
 
-      const portfolio = await tx.portfolio.findUnique({
-        where: { projectId },
-        select: { id: true, coverMediaId: true },
-      });
+      const target = await config.findByProject(tx, projectId);
 
-      if (!portfolio) {
+      if (!target) {
         throw new NotFoundException(
-          'Project has no portfolio to set a cover for',
+          `Project has no ${facet} to set a cover for`,
         );
       }
 
-      if (portfolio.coverMediaId) {
+      if (target.coverMediaId) {
         throw new ConflictException({ reason: 'COVER_ALREADY_EXISTS' });
       }
 
       const media = await tx.projectMedia.findUnique({
-        where: { id: dto.mediaId },
+        where: { id: mediaId },
         select: {
           id: true,
           projectId: true,
           scope: true,
           type: true,
           status: true,
+          displayOrder: true,
         },
       });
 
@@ -550,9 +730,13 @@ export class ProjectsService {
         throw new NotFoundException('Cover media not found for this project');
       }
 
-      if (media.scope !== 'PORTFOLIO' || media.type !== 'IMAGE') {
+      if (
+        media.scope !== config.scope ||
+        media.type !== 'IMAGE' ||
+        media.displayOrder !== null
+      ) {
         throw new BadRequestException(
-          'Media is not eligible as a portfolio cover',
+          `Media is not eligible as a ${facet} cover`,
         );
       }
 
@@ -565,16 +749,31 @@ export class ProjectsService {
         data: { status: 'CONFIRMED', confirmedAt: new Date() },
       });
 
-      await tx.portfolio.update({
-        where: { id: portfolio.id },
-        data: { coverMediaId: media.id },
+      // Guarded on coverMediaId still being null, so a cover confirmed by a
+      // concurrent request since the check above is never overwritten.
+      const { count } = await config.setCover(tx, target.id, media.id, userId);
+
+      if (count === 0) {
+        throw new ConflictException({ reason: 'COVER_ALREADY_EXISTS' });
+      }
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: config.action,
+        entityType: facet,
+        entityId: target.id,
+        projectId,
+        metadata: { mediaId: media.id },
       });
 
       return this.loadDetailOrFail(tx, projectId);
     });
   }
 
-  async publishPortfolio(projectId: string): Promise<ProjectDetailDto> {
+  async publishPortfolio(
+    projectId: string,
+    userId: string,
+  ): Promise<ProjectDetailDto> {
     return this.prisma.$transaction(async (tx) => {
       await findActiveOrFail(tx, projectId);
 
@@ -618,36 +817,64 @@ export class ProjectsService {
           isPublished: true,
           publishedAt: new Date(),
           displayOrder: (_max.displayOrder ?? 0) + 1,
+          updatedById: userId,
         },
+      });
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'portfolio.publish',
+        entityType: 'portfolio',
+        entityId: portfolio.id,
+        projectId,
       });
 
       return this.loadDetailOrFail(tx, projectId);
     });
   }
 
-  async unpublishPortfolio(projectId: string): Promise<ProjectDetailDto> {
-    await findActiveOrFail(this.prisma, projectId);
+  async unpublishPortfolio(
+    projectId: string,
+    userId: string,
+  ): Promise<ProjectDetailDto> {
+    return this.prisma.$transaction(async (tx) => {
+      await findActiveOrFail(tx, projectId);
 
-    const portfolio = await this.prisma.portfolio.findUnique({
-      where: { projectId },
-      select: { id: true },
+      const portfolio = await tx.portfolio.findUnique({
+        where: { projectId },
+        select: { id: true },
+      });
+
+      if (!portfolio) {
+        throw new NotFoundException('Project has no portfolio to unpublish');
+      }
+
+      await tx.portfolio.update({
+        where: { id: portfolio.id },
+        data: {
+          isPublished: false,
+          publishedAt: null,
+          displayOrder: null,
+          updatedById: userId,
+        },
+      });
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'portfolio.unpublish',
+        entityType: 'portfolio',
+        entityId: portfolio.id,
+        projectId,
+      });
+
+      return this.loadDetailOrFail(tx, projectId);
     });
-
-    if (!portfolio) {
-      throw new NotFoundException('Project has no portfolio to unpublish');
-    }
-
-    await this.prisma.portfolio.update({
-      where: { id: portfolio.id },
-      data: { isPublished: false, publishedAt: null, displayOrder: null },
-    });
-
-    return this.loadDetailOrFail(this.prisma, projectId);
   }
 
   async createPublication(
     projectId: string,
     dto: CreatePublicationDto,
+    userId: string,
   ): Promise<PublicationDetailDto> {
     return this.prisma.$transaction(async (tx) => {
       const project = await findActiveOrFail(tx, projectId);
@@ -666,7 +893,7 @@ export class ProjectsService {
         Object.entries(fields).filter(([, value]) => value !== undefined),
       ) as Partial<CreatePublicationDto>;
 
-      return tx.publication.create({
+      const publication = await tx.publication.create({
         data: {
           ...presentFields,
           projectId,
@@ -674,15 +901,27 @@ export class ProjectsService {
           // Publication slugs live in their own unique namespace, so this is
           // resolved against publications, not against portfolio slugs.
           slug: await this.uniquePublicationSlug(tx, slugify(project.title)),
+          updatedById: userId,
         },
         select: publicationDetailSelect,
       });
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'publication.create',
+        entityType: 'publication',
+        entityId: publication.id,
+        projectId,
+      });
+
+      return publication;
     });
   }
 
   async updatePublication(
     projectId: string,
     dto: UpsertPublicationDto,
+    userId: string,
   ): Promise<PublicationDetailDto> {
     const { publication, staleStorageKeys } = await this.prisma.$transaction(
       async (tx) => {
@@ -690,7 +929,7 @@ export class ProjectsService {
 
         const existing = await tx.publication.findUnique({
           where: { projectId },
-          select: { id: true, type: true },
+          select: publicationDetailSelect,
         });
 
         if (!existing) {
@@ -701,7 +940,7 @@ export class ProjectsService {
           dto.type !== undefined && dto.type !== existing.type;
 
         const staleStorageKeys: string[] = [];
-        const typeTransitionData: Prisma.PublicationUpdateInput = {};
+        const typeTransitionData: Prisma.PublicationUncheckedUpdateInput = {};
 
         if (isTypeChanging) {
           if (existing.type === PublicationType.SALE) {
@@ -740,10 +979,30 @@ export class ProjectsService {
           Object.entries(dto).filter(([, value]) => value !== undefined),
         ) as Partial<UpsertPublicationDto>;
 
+        const data = { ...typeTransitionData, ...presentFields };
+        const fields = changedFields(existing, data);
+
+        // A body that changes nothing is not a write: no updatedAt/updatedById
+        // bump and no log row. A type change always lands in `fields`.
+        if (fields.length === 0) {
+          return { publication: existing, staleStorageKeys };
+        }
+
         const publication = await tx.publication.update({
           where: { id: existing.id },
-          data: { ...typeTransitionData, ...presentFields },
+          data: { ...data, updatedById: userId },
           select: publicationDetailSelect,
+        });
+
+        await logActivity(tx, {
+          actorId: userId,
+          action: 'publication.update',
+          entityType: 'publication',
+          entityId: existing.id,
+          projectId,
+          metadata: isTypeChanging
+            ? { fields, typeFrom: existing.type, typeTo: dto.type }
+            : { fields },
         });
 
         return { publication, staleStorageKeys };
@@ -759,7 +1018,7 @@ export class ProjectsService {
     return publication;
   }
 
-  async deletePublication(projectId: string): Promise<void> {
+  async deletePublication(projectId: string, userId: string): Promise<void> {
     const staleStorageKeys = await this.prisma.$transaction(async (tx) => {
       await findActiveOrFail(tx, projectId);
 
@@ -794,6 +1053,15 @@ export class ProjectsService {
       });
 
       await tx.publication.delete({ where: { id: publication.id } });
+
+      await logActivity(tx, {
+        actorId: userId,
+        action: 'publication.delete',
+        entityType: 'publication',
+        entityId: publication.id,
+        projectId,
+        metadata: { deletedMediaCount: media.length },
+      });
 
       return media.map((item) => item.storageKey);
     });

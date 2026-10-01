@@ -1,6 +1,7 @@
 import { IsInt, IsOptional, IsPositive, IsString, Min } from 'class-validator';
 
-export class CreatePortfolioCoverDto {
+// Shared by the portfolio and publication cover flows.
+export class CreateCoverDto {
   @IsString()
   mimeType: string;
 
@@ -16,8 +17,8 @@ export class CreatePortfolioCoverDto {
   @IsString()
   caption?: string;
 
-  // Must match PORTFOLIO_COVER_WIDTH × PORTFOLIO_COVER_HEIGHT exactly; checked
-  // in ProjectsService so the failure carries the COVER_INVALID_DIMENSIONS reason.
+  // Must match the facet's cover size exactly; checked in ProjectsService so
+  // the failure carries the COVER_INVALID_DIMENSIONS reason.
   @IsInt()
   @Min(1)
   width: number;

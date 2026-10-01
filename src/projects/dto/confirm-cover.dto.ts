@@ -1,6 +1,6 @@
 import { IsUUID } from 'class-validator';
 
-export class ConfirmPortfolioCoverDto {
+export class ConfirmCoverDto {
   @IsUUID()
   mediaId: string;
 }

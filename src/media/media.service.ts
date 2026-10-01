@@ -11,6 +11,7 @@ import {
   MediaStatus,
   MediaType,
 } from '../../generated/prisma/enums';
+import { logActivity } from '../activity-log/log-activity.util';
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { findActiveOrFail } from '../projects/project-existence.util';
@@ -183,9 +184,11 @@ export class MediaService {
       where: { id: mediaId },
       select: {
         id: true,
+        projectId: true,
         status: true,
         displayOrder: true,
         scope: true,
+        type: true,
         width: true,
         height: true,
       },
@@ -197,9 +200,11 @@ export class MediaService {
 
     assertScopePermission(user, media.scope);
 
+    // Covers (portfolio and publication alike) are the only media created
+    // with a null displayOrder; they have their own confirm route per facet.
     if (media.displayOrder === null) {
       throw new BadRequestException(
-        'Portfolio cover media must be confirmed via PATCH /projects/:id/portfolio/cover/confirm',
+        `Cover media must be confirmed via PATCH /projects/:id/${media.scope.toLowerCase()}/cover/confirm`,
       );
     }
 
@@ -208,9 +213,20 @@ export class MediaService {
     }
 
     const confirmedAt = new Date();
-    await this.prisma.projectMedia.update({
-      where: { id: mediaId },
-      data: { status: MediaStatus.CONFIRMED, confirmedAt },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.projectMedia.update({
+        where: { id: mediaId },
+        data: { status: MediaStatus.CONFIRMED, confirmedAt },
+      });
+
+      await logActivity(tx, {
+        actorId: user.sub,
+        action: 'media.confirm',
+        entityType: 'media',
+        entityId: mediaId,
+        projectId: media.projectId,
+        metadata: { scope: media.scope, type: media.type },
+      });
     });
 
     return {
@@ -225,7 +241,7 @@ export class MediaService {
   async deleteMedia(mediaId: string, user: AccessTokenPayload): Promise<void> {
     const media = await this.prisma.projectMedia.findUnique({
       where: { id: mediaId },
-      select: { storageKey: true, scope: true },
+      select: { projectId: true, storageKey: true, scope: true, type: true },
     });
 
     if (!media) {
@@ -237,16 +253,32 @@ export class MediaService {
     await this.prisma.$transaction(async (tx) => {
       await tx.portfolio.updateMany({
         where: { coverMediaId: mediaId },
-        data: { coverMediaId: null },
+        data: { coverMediaId: null, updatedById: user.sub },
+      });
+
+      await tx.publication.updateMany({
+        where: { coverMediaId: mediaId },
+        data: { coverMediaId: null, updatedById: user.sub },
       });
 
       await tx.projectMedia.delete({ where: { id: mediaId } });
+
+      await logActivity(tx, {
+        actorId: user.sub,
+        action: 'media.delete',
+        entityType: 'media',
+        entityId: mediaId,
+        projectId: media.projectId,
+        metadata: { scope: media.scope, type: media.type },
+      });
     });
 
     await deleteStorageObjectSilently(this.storageService, media.storageKey);
   }
 
-  async cleanupPendingMedia(): Promise<CleanupPendingMediaResult> {
+  async cleanupPendingMedia(
+    user: AccessTokenPayload,
+  ): Promise<CleanupPendingMediaResult> {
     const cutoff = new Date(Date.now() - PENDING_CLEANUP_AGE_MS);
 
     const stale = await this.prisma.projectMedia.findMany({
@@ -254,12 +286,22 @@ export class MediaService {
       select: { id: true, storageKey: true },
     });
 
-    if (stale.length === 0) {
-      return { purged: 0 };
-    }
+    // One row per run, including runs that purge nothing: the run itself is
+    // the audited operation.
+    await this.prisma.$transaction(async (tx) => {
+      if (stale.length > 0) {
+        await tx.projectMedia.deleteMany({
+          where: { id: { in: stale.map((media) => media.id) } },
+        });
+      }
 
-    await this.prisma.projectMedia.deleteMany({
-      where: { id: { in: stale.map((media) => media.id) } },
+      await logActivity(tx, {
+        actorId: user.sub,
+        action: 'media.cleanup',
+        entityType: 'media',
+        entityId: 'cleanup',
+        metadata: { purgedCount: stale.length },
+      });
     });
 
     await Promise.all(
