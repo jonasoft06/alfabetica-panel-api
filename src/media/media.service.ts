@@ -204,20 +204,21 @@ export class MediaService {
 
     assertScopePermission(user, media.scope);
 
-    // Section PDFs are created with a null displayOrder like covers, so this
-    // goes first to point at the right route.
+    // Section PDFs are confirmed only through
+    // PATCH /projects/:id/publication/sections/:sectionId/pdf/confirm, which
+    // links them to their section. They are created with a null displayOrder
+    // like covers, so this check runs before the cover check. The response
+    // does not name the route.
     if (media.type === MediaType.PDF) {
-      throw new BadRequestException(
-        'Section PDFs must be confirmed via PATCH /projects/:id/publication/sections/:sectionId/pdf/confirm',
-      );
+      throw new BadRequestException({ reason: 'MEDIA_CONFIRM_NOT_ALLOWED' });
     }
 
     // Covers (portfolio and publication alike) are the only media created
-    // with a null displayOrder; they have their own confirm route per facet.
+    // with a null displayOrder. Each facet confirms its cover only through
+    // PATCH /projects/:id/<scope>/cover/confirm, which sets it as that facet's
+    // cover. The response does not name the route.
     if (media.displayOrder === null) {
-      throw new BadRequestException(
-        `Cover media must be confirmed via PATCH /projects/:id/${media.scope.toLowerCase()}/cover/confirm`,
-      );
+      throw new BadRequestException({ reason: 'MEDIA_CONFIRM_NOT_ALLOWED' });
     }
 
     if (media.status === MediaStatus.CONFIRMED) {

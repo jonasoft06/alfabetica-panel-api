@@ -12,11 +12,12 @@ import {
 export class CreatePublicationSectionDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(17)
   label: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(220)
   description?: string;
 
   // Omitted -> appended after the current last section.

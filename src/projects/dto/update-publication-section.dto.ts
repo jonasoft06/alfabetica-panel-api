@@ -16,11 +16,12 @@ export class UpdatePublicationSectionDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @IsNotEmpty()
+  @MaxLength(17)
   label?: string;
 
   // null clears it.
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(220)
   description?: string | null;
 }
