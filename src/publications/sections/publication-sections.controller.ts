@@ -25,20 +25,23 @@ import { ReorderPublicationSectionsDto } from './dto/reorder-publication-section
 import { UpdatePublicationSectionDto } from './dto/update-publication-section.dto';
 import { PublicationSectionsService } from './publication-sections.service';
 
-@Controller('projects/:projectId/publication/sections')
+// Collection routes live under the project, since they need the parent.
+// Member routes are flat: a section id is enough to resolve its publication
+// and project.
+@Controller()
 @UseGuards(AccessTokenGuard, PermissionsGuard)
 export class PublicationSectionsController {
   constructor(private readonly sectionsService: PublicationSectionsService) {}
 
   // Read-only, same as the other facet GETs: any authenticated user.
-  @Get()
+  @Get('projects/:projectId/publication/sections')
   async findAll(
     @Param('projectId') projectId: string,
   ): Promise<PublicationSectionDto[]> {
     return this.sectionsService.findAll(projectId);
   }
 
-  @Post()
+  @Post('projects/:projectId/publication/sections')
   @RequirePermissions('publication')
   async create(
     @Param('projectId') projectId: string,
@@ -48,9 +51,7 @@ export class PublicationSectionsController {
     return this.sectionsService.create(projectId, dto, user.sub);
   }
 
-  // Declared before the :sectionId routes so "order" is never captured as a
-  // section id.
-  @Put('order')
+  @Put('projects/:projectId/publication/sections/order')
   @RequirePermissions('publication')
   async reorder(
     @Param('projectId') projectId: string,
@@ -60,54 +61,45 @@ export class PublicationSectionsController {
     return this.sectionsService.reorder(projectId, dto, user.sub);
   }
 
-  @Patch(':sectionId')
+  @Patch('sections/:sectionId')
   @RequirePermissions('publication')
   async update(
-    @Param('projectId') projectId: string,
     @Param('sectionId') sectionId: string,
     @Body() dto: UpdatePublicationSectionDto,
     @CurrentUser() user: AccessTokenPayload,
   ): Promise<PublicationSectionDto> {
-    return this.sectionsService.update(projectId, sectionId, dto, user.sub);
+    return this.sectionsService.update(sectionId, dto, user.sub);
   }
 
-  @Delete(':sectionId')
+  @Delete('sections/:sectionId')
   @RequirePermissions('publication')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
-    @Param('projectId') projectId: string,
     @Param('sectionId') sectionId: string,
     @CurrentUser() user: AccessTokenPayload,
   ): Promise<void> {
-    return this.sectionsService.remove(projectId, sectionId, user.sub);
+    return this.sectionsService.remove(sectionId, user.sub);
   }
 
   // Same two-step contract as the cover routes: create a PENDING media row and
   // upload to the presigned URL, then confirm to link it to the section.
   // Removing the PDF goes through DELETE /media/:id.
-  @Post(':sectionId/pdf')
+  @Post('sections/:sectionId/pdf')
   @RequirePermissions('publication')
   async createPdf(
-    @Param('projectId') projectId: string,
     @Param('sectionId') sectionId: string,
     @Body() dto: CreateSectionPdfDto,
   ): Promise<CreateMediaResult> {
-    return this.sectionsService.createPdf(projectId, sectionId, dto);
+    return this.sectionsService.createPdf(sectionId, dto);
   }
 
-  @Patch(':sectionId/pdf/confirm')
+  @Patch('sections/:sectionId/pdf/confirm')
   @RequirePermissions('publication')
   async confirmPdf(
-    @Param('projectId') projectId: string,
     @Param('sectionId') sectionId: string,
     @Body() dto: ConfirmSectionPdfDto,
     @CurrentUser() user: AccessTokenPayload,
   ): Promise<PublicationSectionDto> {
-    return this.sectionsService.confirmPdf(
-      projectId,
-      sectionId,
-      dto.mediaId,
-      user.sub,
-    );
+    return this.sectionsService.confirmPdf(sectionId, dto.mediaId, user.sub);
   }
 }

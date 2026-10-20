@@ -7,7 +7,7 @@ import {
 } from 'class-validator';
 
 /**
- * Body of PATCH /projects/:id/publication/sections/:sectionId. sortOrder
+ * Body of PATCH /sections/:sectionId. sortOrder
  * changes go through PUT .../sections/order and the PDF through the section
  * PDF routes; any other key is rejected by the global forbidNonWhitelisted pipe.
  */

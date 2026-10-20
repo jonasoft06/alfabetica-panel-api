@@ -57,6 +57,17 @@ type SectionRow = Prisma.PublicationSectionGetPayload<{
   select: typeof sectionSelect;
 }>;
 
+// Member routes (/sections/:sectionId) carry no project in the URL, so the
+// publication and its project are resolved through the section itself.
+const memberSectionSelect = {
+  ...sectionSelect,
+  publication: { select: { id: true, projectId: true } },
+} satisfies Prisma.PublicationSectionSelect;
+
+type MemberSectionRow = Prisma.PublicationSectionGetPayload<{
+  select: typeof memberSectionSelect;
+}>;
+
 function isUniqueViolation(error: unknown): boolean {
   return (
     error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -155,18 +166,13 @@ export class PublicationSectionsService {
   }
 
   async update(
-    projectId: string,
     sectionId: string,
     dto: UpdatePublicationSectionDto,
     userId: string,
   ): Promise<PublicationSectionDto> {
     return this.prisma.$transaction(async (tx) => {
-      const publication = await this.findPublicationOrFail(tx, projectId);
-      const section = await this.findSectionOrFail(
-        tx,
-        publication.id,
-        sectionId,
-      );
+      const section = await this.findSectionOrFail(tx, sectionId);
+      const { id: publicationId, projectId } = section.publication;
 
       const data = { label: dto.label, description: dto.description };
       const fields = changedFields(section, data);
@@ -187,7 +193,7 @@ export class PublicationSectionsService {
         actorId: userId,
         action: 'publication.section_update',
         entityType: 'publication',
-        entityId: publication.id,
+        entityId: publicationId,
         projectId,
         metadata: { sectionId: section.id, fields },
       });
@@ -255,18 +261,10 @@ export class PublicationSectionsService {
     });
   }
 
-  async remove(
-    projectId: string,
-    sectionId: string,
-    userId: string,
-  ): Promise<void> {
+  async remove(sectionId: string, userId: string): Promise<void> {
     const storageKey = await this.prisma.$transaction(async (tx) => {
-      const publication = await this.findPublicationOrFail(tx, projectId);
-      const section = await this.findSectionOrFail(
-        tx,
-        publication.id,
-        sectionId,
-      );
+      const section = await this.findSectionOrFail(tx, sectionId);
+      const { id: publicationId, projectId } = section.publication;
 
       // The section goes first: it references its PDF with a RESTRICT FK.
       // Remaining sections keep their sortOrder; gaps are allowed.
@@ -280,7 +278,7 @@ export class PublicationSectionsService {
         actorId: userId,
         action: 'publication.section_delete',
         entityType: 'publication',
-        entityId: publication.id,
+        entityId: publicationId,
         projectId,
         metadata: {
           sectionId: section.id,
@@ -298,22 +296,14 @@ export class PublicationSectionsService {
     }
   }
 
-  // Mirrors ProjectsService.createCover: a PENDING media row plus a presigned
+  // Mirrors CoverService.createCover: a PENDING media row plus a presigned
   // upload URL. Nothing is linked to the section until confirmPdf.
   async createPdf(
-    projectId: string,
     sectionId: string,
     dto: CreateSectionPdfDto,
   ): Promise<CreateMediaResult> {
-    const publication = await this.findPublicationOrFail(
-      this.prisma,
-      projectId,
-    );
-    const section = await this.findSectionOrFail(
-      this.prisma,
-      publication.id,
-      sectionId,
-    );
+    const section = await this.findSectionOrFail(this.prisma, sectionId);
+    const { projectId } = section.publication;
 
     if (section.pdfMedia) {
       throw new ConflictException({ reason: 'SECTION_PDF_ALREADY_EXISTS' });
@@ -366,21 +356,16 @@ export class PublicationSectionsService {
     };
   }
 
-  // Mirrors ProjectsService.confirmCover.
+  // Mirrors CoverService.confirmCoverInTx.
   async confirmPdf(
-    projectId: string,
     sectionId: string,
     mediaId: string,
     userId: string,
   ): Promise<PublicationSectionDto> {
     try {
       return await this.prisma.$transaction(async (tx) => {
-        const publication = await this.findPublicationOrFail(tx, projectId);
-        const section = await this.findSectionOrFail(
-          tx,
-          publication.id,
-          sectionId,
-        );
+        const section = await this.findSectionOrFail(tx, sectionId);
+        const { id: publicationId, projectId } = section.publication;
 
         if (section.pdfMedia) {
           throw new ConflictException({ reason: 'SECTION_PDF_ALREADY_EXISTS' });
@@ -441,7 +426,7 @@ export class PublicationSectionsService {
           actorId: userId,
           action: 'publication.section_pdf_set',
           entityType: 'publication',
-          entityId: publication.id,
+          entityId: publicationId,
           projectId,
           metadata: { sectionId: section.id, mediaId: media.id },
         });
@@ -481,19 +466,22 @@ export class PublicationSectionsService {
     return publication;
   }
 
+  // A section of a soft-deleted project is treated as missing, same as every
+  // other route under a deleted project.
   private async findSectionOrFail(
     client: PrismaClientLike,
-    publicationId: string,
     sectionId: string,
-  ): Promise<SectionRow> {
-    const section = await client.publicationSection.findFirst({
-      where: { id: sectionId, publicationId },
-      select: sectionSelect,
+  ): Promise<MemberSectionRow> {
+    const section = await client.publicationSection.findUnique({
+      where: { id: sectionId },
+      select: memberSectionSelect,
     });
 
     if (!section) {
       throw new NotFoundException('Section not found for this publication');
     }
+
+    await findActiveOrFail(client, section.publication.projectId);
 
     return section;
   }

@@ -6,7 +6,7 @@ import {
   MaxLength,
 } from 'class-validator';
 
-// Body of POST .../sections/:sectionId/pdf. mimeType and size limits are
+// Body of POST /sections/:sectionId/pdf. mimeType and size limits are
 // checked in PublicationSectionsService, same as the cover flow.
 export class CreateSectionPdfDto {
   @IsString()
