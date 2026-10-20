@@ -19,6 +19,7 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
 import type { CreateMediaResult } from '../media/media.service';
 import { ConfirmCoverDto } from './dto/confirm-cover.dto';
+import type { CoverResponseDto } from './dto/cover-response.dto';
 import { CreateCoverDto } from './dto/create-cover.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { CreatePublicationDto } from './dto/create-publication.dto';
@@ -161,6 +162,12 @@ export class ProjectsController {
     return this.projectsService.findPublication(id);
   }
 
+  // Read-only, same as the other facet GETs: any authenticated user.
+  @Get(':id/portfolio/cover')
+  async findPortfolioCover(@Param('id') id: string): Promise<CoverResponseDto> {
+    return this.projectsService.findCover(id, 'portfolio');
+  }
+
   @Post(':id/portfolio/cover')
   @RequirePermissions('portfolio')
   async createPortfolioCover(
@@ -183,6 +190,14 @@ export class ProjectsController {
       dto.mediaId,
       user.sub,
     );
+  }
+
+  // Read-only, same as the other facet GETs: any authenticated user.
+  @Get(':id/publication/cover')
+  async findPublicationCover(
+    @Param('id') id: string,
+  ): Promise<CoverResponseDto> {
+    return this.projectsService.findCover(id, 'publication');
   }
 
   @Post(':id/publication/cover')

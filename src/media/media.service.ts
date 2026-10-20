@@ -20,6 +20,8 @@ import { deleteStorageObjectSilently } from '../storage/delete-storage-object-si
 import { buildStorageKey } from '../storage/storage-key.util';
 import { StorageService } from '../storage/storage.service';
 import type { CreateMediaDto } from './dto/create-media.dto';
+import type { ProjectGalleryResponseDto } from './dto/project-gallery-response.dto';
+import { mediaItemSelect, toMediaItem } from './media-item.mapper';
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_SIZE_BYTES = 25 * 1024 * 1024;
@@ -177,6 +179,54 @@ export class MediaService {
       expiresIn: UPLOAD_URL_EXPIRES_IN_SECONDS,
       width,
       height,
+    };
+  }
+
+  async findProjectMedia(
+    projectId: string,
+    scope: MediaScope,
+  ): Promise<ProjectGalleryResponseDto> {
+    await findActiveOrFail(this.prisma, projectId);
+
+    const facet =
+      scope === MediaScope.PORTFOLIO
+        ? await this.prisma.portfolio.findUnique({
+            where: { projectId },
+            select: { coverMediaId: true },
+          })
+        : await this.prisma.publication.findUnique({
+            where: { projectId },
+            select: { coverMediaId: true },
+          });
+
+    if (!facet) {
+      throw new NotFoundException(
+        `Project has no ${scope === MediaScope.PORTFOLIO ? 'portfolio' : 'publication'}`,
+      );
+    }
+
+    const { coverMediaId } = facet;
+
+    // Gallery = confirmed images with a displayOrder. Covers and section PDFs
+    // are created with a null displayOrder, so that filter already drops
+    // them; the cover id is excluded explicitly as well so it can never leak
+    // into the gallery.
+    const items = await this.prisma.projectMedia.findMany({
+      where: {
+        projectId,
+        scope,
+        status: MediaStatus.CONFIRMED,
+        type: MediaType.IMAGE,
+        displayOrder: { not: null },
+        ...(coverMediaId ? { id: { not: coverMediaId } } : {}),
+      },
+      select: mediaItemSelect,
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    return {
+      scope,
+      items: items.map((media) => toMediaItem(this.storageService, media)),
     };
   }
 

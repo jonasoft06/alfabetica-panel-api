@@ -8,6 +8,7 @@ import {
 import { Prisma } from '../../generated/prisma/client';
 import {
   MediaScope,
+  MediaStatus,
   MediaType,
   PublicationType,
 } from '../../generated/prisma/enums';
@@ -18,6 +19,7 @@ import {
   UPLOAD_URL_EXPIRES_IN_SECONDS,
 } from '../media/media.service';
 import type { CreateMediaResult } from '../media/media.service';
+import { mediaItemSelect, toMediaItem } from '../media/media-item.mapper';
 import { changedFields } from '../activity-log/changed-fields.util';
 import {
   logActivity,
@@ -27,6 +29,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { deleteStorageObjectSilently } from '../storage/delete-storage-object-silently.util';
 import { buildStorageKey } from '../storage/storage-key.util';
 import { StorageService } from '../storage/storage.service';
+import type { CoverResponseDto } from './dto/cover-response.dto';
 import type { CreateCoverDto } from './dto/create-cover.dto';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { CreatePublicationDto } from './dto/create-publication.dto';
@@ -616,6 +619,32 @@ export class ProjectsService {
         deleteStorageObjectSilently(this.storageService, storageKey),
       ),
     );
+  }
+
+  async findCover(
+    projectId: string,
+    facet: CoverFacet,
+  ): Promise<CoverResponseDto> {
+    const config = COVER_FACETS[facet];
+
+    await findActiveOrFail(this.prisma, projectId);
+
+    const target = await config.findByProject(this.prisma, projectId);
+
+    if (!target) {
+      throw new NotFoundException(`Project has no ${facet}`);
+    }
+
+    if (!target.coverMediaId) {
+      return { cover: null };
+    }
+
+    const cover = await this.prisma.projectMedia.findFirst({
+      where: { id: target.coverMediaId, status: MediaStatus.CONFIRMED },
+      select: mediaItemSelect,
+    });
+
+    return { cover: cover ? toMediaItem(this.storageService, cover) : null };
   }
 
   async createCover(
