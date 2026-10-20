@@ -5,26 +5,26 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '../../../generated/prisma/client';
 import {
   MediaScope,
   MediaStatus,
   MediaType,
   PublicationType,
-} from '../../generated/prisma/enums';
-import { changedFields } from '../activity-log/changed-fields.util';
-import { logActivity } from '../activity-log/log-activity.util';
+} from '../../../generated/prisma/enums';
+import { changedFields } from '../../activity-log/changed-fields.util';
+import { logActivity } from '../../activity-log/log-activity.util';
 import {
   EXTENSION_BY_MEDIA_TYPE,
   MAX_SIZE_BY_MEDIA_TYPE,
   MIME_TYPE_BY_MEDIA_TYPE,
   UPLOAD_URL_EXPIRES_IN_SECONDS,
-} from '../media/media.service';
-import type { CreateMediaResult } from '../media/media.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { deleteStorageObjectSilently } from '../storage/delete-storage-object-silently.util';
-import { buildStorageKey } from '../storage/storage-key.util';
-import { StorageService } from '../storage/storage.service';
+} from '../../media/media.service';
+import type { CreateMediaResult } from '../../media/media.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import { deleteStorageObjectSilently } from '../../storage/delete-storage-object-silently.util';
+import { buildStorageKey } from '../../storage/storage-key.util';
+import { StorageService } from '../../storage/storage.service';
 import type { CreatePublicationSectionDto } from './dto/create-publication-section.dto';
 import type { CreateSectionPdfDto } from './dto/create-section-pdf.dto';
 import type { PublicationSectionDto } from './dto/publication-section.dto';
@@ -33,7 +33,7 @@ import type { UpdatePublicationSectionDto } from './dto/update-publication-secti
 import {
   findActiveOrFail,
   type PrismaClientLike,
-} from './project-existence.util';
+} from '../../common/project-existence.util';
 
 const sectionSelect = {
   id: true,

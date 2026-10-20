@@ -8,7 +8,6 @@ import {
   Param,
   Patch,
   Post,
-  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -17,20 +16,11 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { AccessTokenGuard } from '../auth/guards/access-token.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
-import type { CreateMediaResult } from '../media/media.service';
-import { ConfirmCoverDto } from './dto/confirm-cover.dto';
-import type { CoverResponseDto } from './dto/cover-response.dto';
-import { CreateCoverDto } from './dto/create-cover.dto';
+import type { ProjectDetailDto } from '../common/dto/project-detail.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
-import { CreatePublicationDto } from './dto/create-publication.dto';
 import { FindProjectsQueryDto } from './dto/find-projects-query.dto';
-import type { PortfolioDetailDto } from './dto/portfolio-detail.dto';
-import type { ProjectDetailDto } from './dto/project-detail.dto';
 import type { ProjectListItemDto } from './dto/project-list-item.dto';
-import type { PublicationDetailDto } from './dto/publication-detail.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
-import { UpsertPortfolioDto } from './dto/upsert-portfolio.dto';
-import { UpsertPublicationDto } from './dto/upsert-publication.dto';
 import { ProjectsService } from './projects.service';
 
 @Controller('projects')
@@ -83,164 +73,5 @@ export class ProjectsController {
     @CurrentUser() user: AccessTokenPayload,
   ): Promise<void> {
     return this.projectsService.remove(id, user.sub);
-  }
-
-  // Adding or removing a facet changes the project's shape, so it belongs to
-  // 'projects'. Editing the facet's own content belongs to the facet.
-  @Post(':id/portfolio')
-  @RequirePermissions('projects')
-  async createPortfolio(
-    @Param('id') id: string,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<PortfolioDetailDto> {
-    return this.projectsService.createPortfolio(id, user.sub);
-  }
-
-  @Delete(':id/portfolio')
-  @RequirePermissions('projects')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async removePortfolio(
-    @Param('id') id: string,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<void> {
-    return this.projectsService.deletePortfolio(id, user.sub);
-  }
-
-  // Read-only, same as findAll/findOne above.
-  @Get(':id/portfolio')
-  async findPortfolio(@Param('id') id: string): Promise<PortfolioDetailDto> {
-    return this.projectsService.findPortfolio(id);
-  }
-
-  @Put(':id/portfolio')
-  @RequirePermissions('portfolio')
-  async updatePortfolio(
-    @Param('id') id: string,
-    @Body() dto: UpsertPortfolioDto,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<PortfolioDetailDto> {
-    return this.projectsService.updatePortfolio(id, dto, user.sub);
-  }
-
-  @Post(':id/publication')
-  @RequirePermissions('projects')
-  async createPublication(
-    @Param('id') id: string,
-    @Body() dto: CreatePublicationDto,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<PublicationDetailDto> {
-    return this.projectsService.createPublication(id, dto, user.sub);
-  }
-
-  @Delete(':id/publication')
-  @RequirePermissions('projects')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async removePublication(
-    @Param('id') id: string,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<void> {
-    return this.projectsService.deletePublication(id, user.sub);
-  }
-
-  @Put(':id/publication')
-  @RequirePermissions('publication')
-  async updatePublication(
-    @Param('id') id: string,
-    @Body() dto: UpsertPublicationDto,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<PublicationDetailDto> {
-    return this.projectsService.updatePublication(id, dto, user.sub);
-  }
-
-  // Read-only, same as findAll/findOne above: any authenticated user can view
-  // publication details regardless of module permission. Writes still go
-  // through PUT :id/publication, gated on 'publication'.
-  @Get(':id/publication')
-  async findPublication(
-    @Param('id') id: string,
-  ): Promise<PublicationDetailDto> {
-    return this.projectsService.findPublication(id);
-  }
-
-  // Read-only, same as the other facet GETs: any authenticated user.
-  @Get(':id/portfolio/cover')
-  async findPortfolioCover(@Param('id') id: string): Promise<CoverResponseDto> {
-    return this.projectsService.findCover(id, 'portfolio');
-  }
-
-  @Post(':id/portfolio/cover')
-  @RequirePermissions('portfolio')
-  async createPortfolioCover(
-    @Param('id') id: string,
-    @Body() dto: CreateCoverDto,
-  ): Promise<CreateMediaResult> {
-    return this.projectsService.createCover(id, 'portfolio', dto);
-  }
-
-  @Patch(':id/portfolio/cover/confirm')
-  @RequirePermissions('portfolio')
-  async confirmPortfolioCover(
-    @Param('id') id: string,
-    @Body() dto: ConfirmCoverDto,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<ProjectDetailDto> {
-    return this.projectsService.confirmCover(
-      id,
-      'portfolio',
-      dto.mediaId,
-      user.sub,
-    );
-  }
-
-  // Read-only, same as the other facet GETs: any authenticated user.
-  @Get(':id/publication/cover')
-  async findPublicationCover(
-    @Param('id') id: string,
-  ): Promise<CoverResponseDto> {
-    return this.projectsService.findCover(id, 'publication');
-  }
-
-  @Post(':id/publication/cover')
-  @RequirePermissions('publication')
-  async createPublicationCover(
-    @Param('id') id: string,
-    @Body() dto: CreateCoverDto,
-  ): Promise<CreateMediaResult> {
-    return this.projectsService.createCover(id, 'publication', dto);
-  }
-
-  @Patch(':id/publication/cover/confirm')
-  @RequirePermissions('publication')
-  async confirmPublicationCover(
-    @Param('id') id: string,
-    @Body() dto: ConfirmCoverDto,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<ProjectDetailDto> {
-    return this.projectsService.confirmCover(
-      id,
-      'publication',
-      dto.mediaId,
-      user.sub,
-    );
-  }
-
-  @Post(':id/portfolio/publish')
-  @RequirePermissions('portfolio')
-  @HttpCode(HttpStatus.OK)
-  async publish(
-    @Param('id') id: string,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<ProjectDetailDto> {
-    return this.projectsService.publishPortfolio(id, user.sub);
-  }
-
-  @Post(':id/portfolio/unpublish')
-  @RequirePermissions('portfolio')
-  @HttpCode(HttpStatus.OK)
-  async unpublish(
-    @Param('id') id: string,
-    @CurrentUser() user: AccessTokenPayload,
-  ): Promise<ProjectDetailDto> {
-    return this.projectsService.unpublishPortfolio(id, user.sub);
   }
 }

@@ -15,7 +15,7 @@ import {
 import { logActivity } from '../activity-log/log-activity.util';
 import type { AccessTokenPayload } from '../auth/interfaces/access-token-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
-import { findActiveOrFail } from '../projects/project-existence.util';
+import { findActiveOrFail } from '../common/project-existence.util';
 import { deleteStorageObjectSilently } from '../storage/delete-storage-object-silently.util';
 import { buildStorageKey } from '../storage/storage-key.util';
 import { StorageService } from '../storage/storage.service';

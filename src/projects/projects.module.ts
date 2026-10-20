@@ -1,28 +1,16 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { PortfoliosModule } from '../portfolios/portfolios.module';
+import { PublicationsModule } from '../publications/publications.module';
 import { StorageModule } from '../storage/storage.module';
-import { PortfoliosController } from './portfolios.controller';
-import { PortfoliosService } from './portfolios.service';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
-import { PublicationSectionsController } from './publication-sections.controller';
-import { PublicationSectionsService } from './publication-sections.service';
-import { PublicationsController } from './publications.controller';
-import { PublicationsService } from './publications.service';
 
+// Aggregate root: project create and soft delete orchestrate the facets
+// through their exported services. Facet modules never import this one.
 @Module({
-  imports: [AuthModule, StorageModule],
-  controllers: [
-    ProjectsController,
-    PublicationSectionsController,
-    PortfoliosController,
-    PublicationsController,
-  ],
-  providers: [
-    ProjectsService,
-    PublicationSectionsService,
-    PortfoliosService,
-    PublicationsService,
-  ],
+  imports: [AuthModule, StorageModule, PortfoliosModule, PublicationsModule],
+  controllers: [ProjectsController],
+  providers: [ProjectsService],
 })
 export class ProjectsModule {}

@@ -3,7 +3,7 @@ import { PublicationType } from '../../../generated/prisma/enums';
 import {
   FACET_STATUS_FILTERS,
   type FacetStatusFilter,
-} from './facet-status-filter';
+} from '../../common/dto/facet-status-filter';
 
 export class FindPublicationsQueryDto {
   @IsOptional()

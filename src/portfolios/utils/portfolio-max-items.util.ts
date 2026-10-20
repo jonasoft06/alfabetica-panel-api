@@ -1,4 +1,4 @@
-import type { PrismaClientLike } from '../project-existence.util';
+import type { PrismaClientLike } from '../../common/project-existence.util';
 
 // Mirrors the schema default for SiteSettings.portfolioMaxItems, used when the
 // singleton settings row has not been created yet.
