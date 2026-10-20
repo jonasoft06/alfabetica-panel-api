@@ -45,13 +45,8 @@ import {
   findActiveOrFail,
   type PrismaClientLike,
 } from './project-existence.util';
+import { findPortfolioMaxItems } from './utils/portfolio-max-items.util';
 import { slugify } from './utils/slugify.util';
-
-// Mirrors the schema default for SiteSettings.portfolioMaxItems, used when the
-// singleton settings row has not been created yet.
-const DEFAULT_PORTFOLIO_MAX_ITEMS = 10;
-
-const SITE_SETTINGS_ID = 1;
 
 // Exact pixel size a portfolio cover must have (3:4 portrait).
 export const PORTFOLIO_COVER_WIDTH = 1200;
@@ -820,12 +815,7 @@ export class ProjectsService {
         throw new NotFoundException('Project has no portfolio to publish');
       }
 
-      const settings = await tx.siteSettings.findUnique({
-        where: { id: SITE_SETTINGS_ID },
-        select: { portfolioMaxItems: true },
-      });
-      const maxItems =
-        settings?.portfolioMaxItems ?? DEFAULT_PORTFOLIO_MAX_ITEMS;
+      const maxItems = await findPortfolioMaxItems(tx);
 
       const currentCount = await tx.portfolio.count({
         where: { isPublished: true },
