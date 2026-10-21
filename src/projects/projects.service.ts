@@ -6,6 +6,7 @@ import type { ProjectDetailDto } from '../common/dto/project-detail.dto';
 import { loadProjectDetailOrFail } from '../common/project-detail.util';
 import { PortfoliosService } from '../portfolios/portfolios.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProductionService } from '../production/production.service';
 import { PublicationsService } from '../publications/publications.service';
 import { deleteStorageObjectSilently } from '../storage/delete-storage-object-silently.util';
 import { StorageService } from '../storage/storage.service';
@@ -21,6 +22,7 @@ export class ProjectsService {
     private readonly storageService: StorageService,
     private readonly portfoliosService: PortfoliosService,
     private readonly publicationsService: PublicationsService,
+    private readonly productionService: ProductionService,
   ) {}
 
   async create(
@@ -69,6 +71,10 @@ export class ProjectsService {
           { type: dto.publication.type },
           userId,
         );
+      }
+
+      if (dto.production) {
+        await this.productionService.createInTx(tx, project.id, userId);
       }
 
       return loadProjectDetailOrFail(tx, project.id);
@@ -184,6 +190,7 @@ export class ProjectsService {
           id: true,
           portfolio: { select: { id: true, slug: true } },
           publication: { select: { id: true, slug: true } },
+          production: { select: { id: true } },
         },
       });
 
@@ -214,6 +221,14 @@ export class ProjectsService {
           tx,
           project.publication,
           suffix,
+          userId,
+        );
+      }
+
+      if (project.production) {
+        await this.productionService.cleanupForProjectDeleteInTx(
+          tx,
+          project.production.id,
           userId,
         );
       }

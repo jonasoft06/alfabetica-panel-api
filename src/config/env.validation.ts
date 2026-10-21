@@ -31,4 +31,11 @@ export const envValidationSchema = Joi.object({
   SPACES_REGION: Joi.string().required(),
   SPACES_ENDPOINT: Joi.string().required(),
   SPACES_CDN_URL: Joi.string().required(),
+
+  // Personal API token: sent as-is in the Authorization header (no Bearer).
+  CLICKUP_API_TOKEN: Joi.string().required(),
+  // Folder a list lives in decides the book type, or that it is finished.
+  CLICKUP_FOLDER_ACADEMIC_ID: Joi.string().required(),
+  CLICKUP_FOLDER_TEXTBOOK_ID: Joi.string().required(),
+  CLICKUP_FOLDER_ARCHIVE_ID: Joi.string().required(),
 });

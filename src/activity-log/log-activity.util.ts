@@ -1,7 +1,7 @@
 import { Prisma } from '../../generated/prisma/client';
 
 export type ActivityEntityType =
-  'project' | 'portfolio' | 'publication' | 'media' | 'user';
+  'project' | 'portfolio' | 'publication' | 'media' | 'user' | 'production';
 
 // Stable keys: stored as-is and queried by the panel, so never rename one.
 export type ActivityAction =
@@ -29,7 +29,13 @@ export type ActivityAction =
   | 'media.cleanup'
   | 'user.invite'
   | 'user.activate'
-  | 'user.deactivate';
+  | 'user.deactivate'
+  | 'production.create'
+  | 'production.update'
+  | 'production.delete'
+  | 'production.link'
+  | 'production.unlink'
+  | 'production.sync';
 
 export interface ActivityLogEntry {
   actorId: string;

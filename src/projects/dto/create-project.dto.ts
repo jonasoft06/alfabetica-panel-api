@@ -16,6 +16,12 @@ export class CreatePortfolioInputDto {
   // class exists so the body contract can grow without a breaking change.
 }
 
+export class CreateProductionInputDto {
+  // Intentionally empty, same as CreatePortfolioInputDto: the production is
+  // created NOT_LINKED with its publicCode; the ClickUp list is linked later
+  // via PUT /projects/:projectId/production.
+}
+
 export class CreatePublicationInputDto {
   @IsEnum(PublicationType)
   type: PublicationType;
@@ -56,4 +62,9 @@ export class CreateProjectDto {
   @ValidateNested()
   @Type(() => CreatePublicationInputDto)
   publication?: CreatePublicationInputDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateProductionInputDto)
+  production?: CreateProductionInputDto;
 }

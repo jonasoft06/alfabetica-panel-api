@@ -51,6 +51,15 @@ const roleLabels = [
   { name: "sales", description: "Sales and commercial follow-up" },
 ];
 
+const productionPhases = [
+  { code: "CONTENT_REVIEW", label: "Revisión de contenidos", sortOrder: 1 },
+  { code: "COPYEDITING", label: "Corrección", sortOrder: 2 },
+  { code: "LAYOUT", label: "Diseño y maquetación", sortOrder: 3 },
+  { code: "FINAL_REVIEW", label: "Revisión final", sortOrder: 4 },
+  { code: "PRINTING", label: "Imprenta", sortOrder: 5 },
+  { code: "PUBLISHED", label: "Publicado", sortOrder: 6 },
+];
+
 async function main() {
   // 1. Permission catalog — fixed, only ever born here.
   const permissions: { id: string; key: string }[] = [];
@@ -76,6 +85,17 @@ async function main() {
     roles.set(saved.name, saved.id);
   }
   console.log(`Roles upserted: ${roles.size}`);
+
+  // 2b. Production phases — fixed catalog; codes are what the code compares,
+  // labels are what clients read.
+  for (const phase of productionPhases) {
+    await prisma.productionPhase.upsert({
+      where: { code: phase.code },
+      update: { label: phase.label, sortOrder: phase.sortOrder },
+      create: phase,
+    });
+  }
+  console.log(`Production phases upserted: ${productionPhases.length}`);
 
   // 3. Single site settings row, on schema defaults.
   const existingSettings = await prisma.siteSettings.findFirst();

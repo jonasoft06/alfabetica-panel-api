@@ -22,6 +22,7 @@ model User {
   updatedProjects     Project[]      @relation("ProjectUpdatedBy")
   updatedPortfolios   Portfolio[]    @relation("PortfolioUpdatedBy")
   updatedPublications Publication[]  @relation("PublicationUpdatedBy")
+  updatedProductions  Production[]   @relation("ProductionUpdatedBy")
   updatedSettings     SiteSettings[] @relation("SiteSettingsUpdatedBy")
   activityLogs        ActivityLog[]  @relation("ActivityLogActor")
 

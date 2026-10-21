@@ -1,31 +1,51 @@
-model ProductionStage {
-  id                 String   @id @default(uuid())
-  key                String   @unique
-  clientLabel        String   @map("client_label")
-  clientDescription  String?  @map("client_description") @db.Text
-  sortOrder          Int      @map("sort_order")
-  clickupStatusMatch String[] @default([]) @map("clickup_status_match")
+enum BookType {
+  ACADEMIC
+  TEXTBOOK
+}
+
+enum ProductionStatus {
+  NOT_LINKED
+  IN_PRODUCTION
+  FINISHED
+}
+
+// Seeded catalog of the phases shown to clients. ClickUp stages are mapped to
+// a phase by stage number (see productions/utils/phase-mapping.ts); the stage
+// itself is never a row.
+model ProductionPhase {
+  id        String @id @default(uuid())
+  code      String @unique
+  label     String
+  sortOrder Int    @map("sort_order")
 
   productions Production[]
 
-  @@map("production_stages")
+  @@map("production_phases")
 }
 
 model Production {
-  id                 String    @id @default(uuid())
-  projectId          String    @unique @map("project_id")
-  publicCode         String    @unique @map("public_code")
-  clickupListId      String?   @map("clickup_list_id")
-  startDate          DateTime? @map("start_date") @db.Date
-  estimatedTotalDays Int?      @map("estimated_total_days")
-  currentStageId     String?   @map("current_stage_id")
-  estimatedEndDate   DateTime? @map("estimated_end_date") @db.Date
-  lastSyncedAt       DateTime? @map("last_synced_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
+  id                  String           @id @default(uuid())
+  projectId           String           @unique @map("project_id")
+  // Random, given to clients to track their book; never derived from the
+  // project.
+  publicCode          String           @unique @map("public_code")
+  authorName          String?          @map("author_name")
+  clickupListId       String?          @unique @map("clickup_list_id")
+  bookType            BookType?        @map("book_type")
+  status              ProductionStatus @default(NOT_LINKED)
+  currentPhaseId      String?          @map("current_phase_id")
+  // Internal ClickUp task name; panel only, never shown to clients.
+  currentStageName    String?          @map("current_stage_name")
+  currentStageDueDate DateTime?        @map("current_stage_due_date") @db.Date
+  estimatedEndDate    DateTime?        @map("estimated_end_date") @db.Date
+  lastSyncedAt        DateTime?        @map("last_synced_at")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+  updatedById         String?          @map("updated_by_id")
 
   project      Project          @relation(fields: [projectId], references: [id])
-  currentStage ProductionStage? @relation(fields: [currentStageId], references: [id])
+  currentPhase ProductionPhase? @relation(fields: [currentPhaseId], references: [id], onDelete: SetNull)
+  updatedBy    User?            @relation("ProductionUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@map("productions")
 }

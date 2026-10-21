@@ -50,9 +50,9 @@ Orden del proyecto completo y estado actual:
 4. **Publication** — hecho: faceta 1:1 con tipos `SALE` / `LINK` / `DOI` (cambio de tipo con cascada), portada, galería, listado `GET /publications`, y **secciones** (solo DOI) con PDF por sección.
 5. **Media** — hecho: Spaces, subida directa con URL prefirmada (`PUT`), ciclo `PENDING` → `CONFIRMED`, limpieza de pendientes, URLs públicas por CDN.
 6. **ActivityLog** — hecho: toda escritura registra una entrada (actor, acción, entidad, proyecto, metadata) en la misma transacción, y las facetas guardan `updatedById`.
-7. **Production + ClickUp** (antes "Seguimiento") — **pendiente**. El schema (`Production`, `ProductionStage`) ya existe; no hay módulo ni endpoints.
+7. **Production + ClickUp** (antes "Seguimiento") — hecho: faceta 1:1 con `publicCode` aleatorio, vínculo a una lista de ClickUp y sincronización **solo de lectura** (individual al vincular, masiva con `POST /productions/sync`). La etapa de ClickUp se traduce a una fase del catálogo `ProductionPhase` por número de etapa y tipo de libro (`production/utils/phase-mapping.ts`). Pendiente: ruta pública de seguimiento.
 8. **Inventory / Product** (antes "Inventario") — **diferido** (fase 2). Solo existe el permiso en el catálogo; no hay schema. La futura tienda se planea como `Product` + `ProductVariant`, unificando los libros que hoy son publicaciones `SALE`; por eso los campos comerciales de `Publication` (`price`, `quantity`, `sku`, `compareAtPrice`) son **transitorios**.
-9. **Gestión de colaboradores** (invitar, editar permisos, desactivar) — **pendiente, diferido hasta que se necesite un segundo usuario**. El schema ya lo soporta (estados, campos de invitación, `user_permissions`); no hay endpoints.
+9. **Gestión de colaboradores** — mínima hecha: listar usuarios/roles/permisos, invitar (`POST /users/invitations`) y activar/desactivar (`PATCH /users/:id/status`). Pendiente: editar permisos, reenviar invitaciones, correo de invitación.
 
 **Convención de nomenclatura:** todo lo que se implemente en este proyecto (modelos, tablas, campos, código, archivos) usa nombres en inglés — no español. El diseño conceptual se discute en español, pero toda su materialización en código es en inglés.
 
@@ -121,14 +121,18 @@ src/
   portfolios/    PortfoliosModule — faceta portfolio + GET /portfolios
   publications/  PublicationsModule — faceta publication + GET /publications
     sections/    secciones DOI y su PDF
+  production/    ProductionModule — faceta production + GET /productions, sync con ClickUp
+                 (un solo ProductionController: patrón objetivo, ver Rutas)
   media/         MediaModule — media de proyecto, galería, limpieza
     covers/      CoverService: reglas de portada compartidas (cada faceta pasa su config)
+  integrations/
+    clickup/     ClickUpModule — cliente de solo lectura; tipos crudos de ClickUp solo aquí
   storage/       StorageModule — cliente de Spaces, URLs prefirmadas y públicas
   activity-log/  logActivity (se llama dentro de la transacción de cada escritura)
   auth/, users/, firebase/, prisma/, config/
 ```
 
-- **Las dependencias apuntan en un solo sentido:** `Projects → Portfolios / Publications → Media → Storage`.
+- **Las dependencias apuntan en un solo sentido:** `Projects → Portfolios / Publications / Production → Media → Storage`, y `Production → ClickUp`.
 - **Las facetas nunca importan `ProjectsModule`.** Usan `common/` para lo que comparten con el proyecto.
 - Las operaciones del proyecto que tocan facetas (crear con facetas, soft delete) siguen siendo atómicas: las facetas exportan métodos `...InTx(tx, …)` (`createInTx`, `cleanupForProjectDeleteInTx`) que `ProjectsService` llama dentro de **su** transacción.
 - **Sin `forwardRef`.** Si aparece un ciclo, se detiene el trabajo y se rediseña.
@@ -139,11 +143,12 @@ src/
 ### Rutas
 
 - **Cada controller declara la URL real** (sin `RouterModule`), para que la ruta sea visible en cada handler.
+- **Patrón objetivo: un solo controller por faceta**, carpeta y archivos en singular, con `@Controller()` y la ruta completa en cada método; sirve tanto el sub-recurso bajo el proyecto como el listado plano y sus acciones. `production/production.controller.ts` ya lo sigue (`/projects/:projectId/production`, `/productions`, `/productions/sync`, `/production-phases`). Portfolios y publications todavía tienen dos controllers (`portfolio.controller` + `portfolios.controller`, etc.) y se migrarán a este patrón más adelante — no mezclar ese cambio con otro trabajo.
 - **Facetas 1:1 = sub-recurso singular bajo el proyecto:** `/projects/:projectId/portfolio`, `/projects/:projectId/publication` (y su `/cover`, `/publish`, …).
 - **Anidamiento poco profundo:** las acciones de colección van bajo el padre (`GET|POST /projects/:projectId/publication/sections`, `PUT …/sections/order`); las acciones de miembro van planas por su propio id (`/media/:id/...`, `/sections/:sectionId/...`).
 - Listados planos por recurso: `GET /portfolios`, `GET /publications`.
 - **Respuesta de las acciones de faceta:** `PATCH …/cover/confirm`, `POST …/portfolio/publish` y `POST …/portfolio/unpublish` devuelven `ProjectDetailDto` (legado, se mantiene por el contrato del webapp — no cambiarlo sin aprobación). Los endpoints de faceta nuevos devuelven la faceta, igual que los `PUT`.
-- Nombres de recurso de una sola palabra, sin guiones cuando sea posible.
+- Nombres de recurso de una sola palabra, sin guiones cuando sea posible. Excepción justificada: `GET /production-phases` (`/phases` sería ambiguo y `/productions/phases` chocaría con un futuro `/productions/:id`).
 - **Ninguna ruta pública (sin autenticación) bajo las rutas del panel.** El prefijo para rutas públicas (sitio de marketing) se decidirá cuando se construyan.
 
 ### Convenciones de respuesta
@@ -152,13 +157,14 @@ src/
 - **Los listados embeben la portada y resuelven los conteos en un número fijo de queries** (sin N+1). Los conteos (`counts`) se calculan sobre el conjunto completo, ignorando los filtros del query, para que las tarjetas de resumen no cambien al filtrar.
 - **Los campos Decimal se serializan como string** (`Prisma.Decimal`, sin ceros a la derecha: `385.00` → `"385"`); el frontend los formatea.
 - **Los query DTOs rechazan parámetros desconocidos** (`ValidationPipe` global con `forbidNonWhitelisted` → 400).
+- **Errores de endpoints nuevos: `{ statusCode, code, message }`** (como auth), con `code` estable y mensaje genérico; nunca se reenvían cuerpos de error de servicios externos (se registran en el log del servidor). Los endpoints existentes que responden `{ reason }` se quedan así hasta un refactor planeado del manejo de errores.
 
 ### Prisma
 
 - **Multi-file schema** (nativo desde Prisma 6.7.0+): `prisma.config.ts` apunta al directorio `prisma/` completo. `prisma/schema.prisma` solo contiene `generator` y `datasource`; cada módulo tiene su archivo (`users.prisma`, `project.prisma`, `portfolio.prisma`, `publication.prisma`, `project-media.prisma`, `activity-log.prisma`, `site-settings.prisma`, `production.prisma`).
 - **Siempre `pnpm exec prisma …`**, nunca `npx` ni `pnpm dlx`.
 - En Prisma 7, `migrate dev` **no** corre `generate` ni el seed por sí solo: después de migrar, ejecutar explícitamente `pnpm exec prisma generate` y, si aplica, `pnpm exec prisma db seed` (el seed es `tsx prisma/seed.ts`, configurado en `prisma.config.ts`).
-- El seed es idempotente (upserts): catálogo de permisos, etiquetas de rol, la fila única de `SiteSettings` y el primer administrador (`SEED_ADMIN_EMAIL`, `SEED_ADMIN_NAME`) en estado `INVITED` con todos los permisos.
+- El seed es idempotente (upserts): catálogo de permisos, etiquetas de rol, fases de producción, la fila única de `SiteSettings` y el primer administrador (`SEED_ADMIN_EMAIL`, `SEED_ADMIN_NAME`) en estado `INVITED` con todos los permisos.
 - `pnpm-lock.yaml` se versiona.
 
 ## Ambientes
