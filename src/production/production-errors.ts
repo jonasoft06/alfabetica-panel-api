@@ -12,6 +12,18 @@ const PRODUCTION_ERRORS = {
     status: HttpStatus.NOT_FOUND,
     message: 'Project has no production',
   },
+  PRODUCTION_MANAGED_BY_CLICKUP: {
+    status: HttpStatus.CONFLICT,
+    message: 'Production data is managed by ClickUp while a list is linked',
+  },
+  PRODUCTION_PHASE_NOT_FOUND: {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'Production phase not found',
+  },
+  PRODUCTION_INCONSISTENT_STATE: {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'Production status and phase are inconsistent',
+  },
   PRODUCTION_NOT_LINKED: {
     status: HttpStatus.UNPROCESSABLE_ENTITY,
     message: 'Production is not linked to a ClickUp list',

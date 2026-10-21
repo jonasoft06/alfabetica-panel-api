@@ -1,5 +1,8 @@
 import { BookType, ProductionStatus } from '../../../generated/prisma/enums';
-import { ProductionPhaseRefDto } from './production-detail.dto';
+import type {
+  ProductionPhaseRefDto,
+  ProductionSource,
+} from './production-detail.dto';
 
 // Item of GET /productions.
 export class ProductionListItemDto {
@@ -7,6 +10,8 @@ export class ProductionListItemDto {
   projectTitle: string;
   publicCode: string;
   authorName: string | null;
+  // CLICKUP while a list is linked (data read from ClickUp), MANUAL otherwise.
+  source: ProductionSource;
   status: ProductionStatus;
   bookType: BookType | null;
   currentPhase: ProductionPhaseRefDto | null;

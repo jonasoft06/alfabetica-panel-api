@@ -4,7 +4,7 @@ enum BookType {
 }
 
 enum ProductionStatus {
-  NOT_LINKED
+  NOT_STARTED
   IN_PRODUCTION
   FINISHED
 }
@@ -32,7 +32,7 @@ model Production {
   authorName          String?          @map("author_name")
   clickupListId       String?          @unique @map("clickup_list_id")
   bookType            BookType?        @map("book_type")
-  status              ProductionStatus @default(NOT_LINKED)
+  status              ProductionStatus @default(NOT_STARTED)
   currentPhaseId      String?          @map("current_phase_id")
   // Internal ClickUp task name; panel only, never shown to clients.
   currentStageName    String?          @map("current_stage_name")

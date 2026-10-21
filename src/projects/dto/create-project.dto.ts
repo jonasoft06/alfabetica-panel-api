@@ -18,8 +18,8 @@ export class CreatePortfolioInputDto {
 
 export class CreateProductionInputDto {
   // Intentionally empty, same as CreatePortfolioInputDto: the production is
-  // created NOT_LINKED with its publicCode; the ClickUp list is linked later
-  // via PUT /projects/:projectId/production.
+  // created NOT_STARTED (manual) with its publicCode; a ClickUp list can be
+  // linked later via PUT /projects/:projectId/production.
 }
 
 export class CreatePublicationInputDto {
