@@ -1,0 +1,19 @@
+{
+  "scripts": {
+    "dokku": {
+      "predeploy": "./node_modules/.bin/prisma migrate deploy"
+    }
+  },
+  "healthchecks": {
+    "web": [
+      {
+        "type": "startup",
+        "name": "health",
+        "path": "/health",
+        "attempts": 5,
+        "wait": 5,
+        "timeout": 5
+      }
+    ]
+  }
+}

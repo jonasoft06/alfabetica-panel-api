@@ -1,0 +1,15 @@
+node_modules
+dist
+generated
+.git
+.env
+.env.*
+.claude
+.agents
+.windsurf
+coverage
+test
+infra
+**/*.log
+README.md
+CLAUDE.md
