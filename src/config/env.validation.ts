@@ -19,11 +19,8 @@ export const envValidationSchema = Joi.object({
   JWT_REFRESH_SECRET: Joi.string().min(64).required(),
   JWT_REFRESH_EXPIRES_IN: Joi.string().default('12h'),
 
-  SUPERADMIN_FIREBASE_UID: Joi.string().when('NODE_ENV', {
-    is: 'production',
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
-  }),
+  // Reserved for the break-glass superadmin, not implemented yet.
+  SUPERADMIN_FIREBASE_UID: Joi.string().optional().allow(''),
 
   SPACES_ACCESS_KEY_ID: Joi.string().required(),
   SPACES_SECRET_ACCESS_KEY: Joi.string().required(),
